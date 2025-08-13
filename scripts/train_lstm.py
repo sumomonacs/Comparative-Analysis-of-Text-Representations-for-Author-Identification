@@ -67,27 +67,27 @@ def parse_args():
     p = argparse.ArgumentParser(add_help=True)
 
     # tweakable training/model knobs
-    p.add_argument("--emb-dim", type=int, default=CFG.emb_dim)
-    p.add_argument("--hidden", type=int, default=CFG.hidden)
-    p.add_argument("--layers", type=int, default=CFG.layers)
-    p.add_argument("--dropout", type=float, default=CFG.dropout)
-    p.add_argument("--pool", type=str, choices=["mean", "max", "last"], default=CFG.pool)
-    p.add_argument("--max-len", type=int, default=CFG.max_len)
+    p.add_argument("--emb-dim", type=int, default=BASE_CFG.emb_dim)
+    p.add_argument("--hidden", type=int, default=BASE_CFG.hidden)
+    p.add_argument("--layers", type=int, default=BASE_CFG.layers)
+    p.add_argument("--dropout", type=float, default=BASE_CFG.dropout)
+    p.add_argument("--pool", type=str, choices=["mean", "max", "last"], default=BASE_CFG.pool)
+    p.add_argument("--max-len", type=int, default=BASE_CFG.max_len)
 
-    p.add_argument("--epochs", type=int, default=CFG.epochs)
-    p.add_argument("--batch-size", type=int, default=CFG.batch_size)
-    p.add_argument("--lr", type=float, default=CFG.lr)
-    p.add_argument("--weight-decay", type=float, default=CFG.weight_decay)
-    p.add_argument("--seed", type=int, default=CFG.seed)
+    p.add_argument("--epochs", type=int, default=BASE_CFG.epochs)
+    p.add_argument("--batch-size", type=int, default=BASE_CFG.batch_size)
+    p.add_argument("--lr", type=float, default=BASE_CFG.lr)
+    p.add_argument("--weight-decay", type=float, default=BASE_CFG.weight_decay)
+    p.add_argument("--seed", type=int, default=BASE_CFG.seed)
 
     # vocab/build flags 
-    p.add_argument("--min-count", type=int, default=getattr(CFG, "min_count", 1))
-    p.add_argument("--vocab-max-size", type=int, default=getattr(CFG, "vocab_max_size", 50000))
-    _bool_flag(p, "lowercase", getattr(CFG, "lowercase", True))
-    _bool_flag(p, "alpha-only", getattr(CFG, "alpha_only", True))
+    p.add_argument("--min-count", type=int, default=getattr(BASE_CFG, "min_count", 1))
+    p.add_argument("--vocab-max-size", type=int, default=getattr(BASE_CFG, "vocab_max_size", 50000))
+    _bool_flag(p, "lowercase", getattr(BASE_CFG, "lowercase", True))
+    _bool_flag(p, "alpha-only", getattr(BASE_CFG, "alpha_only", True))
 
     # device 
-    p.add_argument("--device", type=str, default=getattr(CFG, "device", "cuda" if torch.cuda.is_available() else "cpu"))
+    p.add_argument("--device", type=str, default=getattr(BASE_CFG, "device", "cuda" if torch.cuda.is_available() else "cpu"))
 
     return p.parse_args()
 

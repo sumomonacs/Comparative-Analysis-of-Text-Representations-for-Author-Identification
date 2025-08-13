@@ -8,7 +8,7 @@
     "min_count": 7,
     "sg": 1,
     "negative": 10,
-    "epochs": 8,
+    "epochs": 10,
     "doc_pool": "sif",
     "sif_a": 0.001,
     "remove_first_pc": true,

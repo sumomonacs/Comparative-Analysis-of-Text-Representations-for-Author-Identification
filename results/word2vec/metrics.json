@@ -1,5 +1,5 @@
 {
   "accuracy": 0.776595744680851,
-  "macro_f1": 0.7756233129482321,
+  "macro_f1": 0.7765783236371471,
   "split": "frozen(data/train.json)"
 }
