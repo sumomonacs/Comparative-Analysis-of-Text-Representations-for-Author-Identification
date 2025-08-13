@@ -233,7 +233,7 @@ def main():
         print(f"\n=== Evaluating {name} on unseen set ===")
         if spec["type"] == "lstm":
             classes, prob, embed = _eval_lstm(spec, excerpts)
-        elif spec["type"] == "sbert_infer":
+        elif spec["type"] == "sbert":
             classes, prob, embed = _eval_sbert_infer(spec, excerpts)
         else:
             classes, prob, embed = _eval_sklearn_prob(spec, excerpts)
@@ -248,7 +248,7 @@ def main():
         print(f" Top-1 acc: {top1_acc:.4f}")
         print(f" Top-2 acc: {top2_acc:.4f}")
 
-        out_png = OUT_ROOT / name / "tsne_unseen.png"
+        out_png = OUT_ROOT / f"{name}-tsne.png"
         # final guard to ensure lengths match (they should)
         if embed.shape[0] != len(gold):
             # fallback: derive from prob so it always matches
