@@ -135,8 +135,9 @@ def _eval_sklearn_prob(spec, excerpts):
 
     # embeddings for t‑SNE
     emb_npy = os.path.join(art, "emb_test.npy")
+
     if os.path.exists(emb_npy):
-        embed = np.load(emb_npy).astype(np.float32, copy=False)
+          embed = np.load(emb_npy, allow_pickle=False).astype(np.float32, copy=False)
     else:
         # If X is vectorized text, reduce with SVD; else fall back to prob SVD
         if isinstance(X, (np.ndarray, list)) and not (hasattr(X, "shape") and len(getattr(X, "shape")) == 2):
@@ -160,8 +161,6 @@ def _eval_sklearn_prob(spec, excerpts):
 
 
 def _eval_lstm(spec, excerpts):
-
-
     art = spec["artifacts"]
     model, stoi, classes, cfg = load_artifacts(art)
     device = cfg.device if isinstance(cfg.device, str) else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -191,6 +190,7 @@ def _eval_lstm(spec, excerpts):
     return classes, topk, prob, embed
 
 def _plot_tsne(Z, labels, title, out_png):
+    
 
     Z = np.asarray(Z)
     if Z.ndim != 2:

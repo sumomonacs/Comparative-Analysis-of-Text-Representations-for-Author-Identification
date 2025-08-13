@@ -123,7 +123,7 @@ def main():
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
 
     # dump test feature matrix for downstream analysis / t‑SNE 
-    np.save(os.path.join(STYLO_OUTPUT, "feats_test.npy"), F_test.astype(np.float32))
+    np.save(os.path.join(STYLO_OUTPUT, "emb_test.npy"), F_test.astype(np.float32))
 
     # save meta for reproducibility
     meta = {
