@@ -1,5 +1,6 @@
 """
     This file trains and evaluates Stylometry + Logistic Regression.
+    Usage: python -m scripts.train_stylometry
 """
 
 import os
@@ -20,8 +21,8 @@ from models.stylometry import StylometricVectorizer
 
 # knobs
 SEED = 42
-MAX_FUNCTION_WORDS = 150
-LOGREG_C = 1.0
+MAX_FUNCTION_WORDS = 300
+LOGREG_C = 0.1
 
 
 # --------------------------- helpers ---------------------------

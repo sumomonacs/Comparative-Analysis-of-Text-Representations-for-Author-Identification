@@ -3,13 +3,13 @@
   "split_file": "data/train.json",
   "seed": 42,
   "stylometry": {
-    "max_function_words": 150,
+    "max_function_words": 300,
     "include_punct": true,
     "include_function_word_vector": true
   },
   "scaler": "StandardScaler(with_mean=True, with_std=True)",
   "logreg": {
-    "C": 1.0,
+    "C": 0.1,
     "max_iter": 10000,
     "multi_class": "multinomial"
   },

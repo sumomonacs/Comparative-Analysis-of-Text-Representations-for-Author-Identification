@@ -1,5 +1,6 @@
 """
     This file trains and evaluates Word2Vec (doc embeddings) + Logistic Regression.
+    Usage: python -m scripts.train_word2vec
 """
 
 import os

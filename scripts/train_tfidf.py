@@ -1,6 +1,7 @@
 
 """
     This file train and evaluate TF‑IDF + Logistic Regression.
+    Usage: python -m scripts.train_tfidf
 """
 
 import os
@@ -8,7 +9,6 @@ import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
 
 import sys
