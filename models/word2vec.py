@@ -11,7 +11,7 @@
 
 import os
 import numpy as np
-
+from dataclasses import dataclass
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
@@ -60,6 +60,7 @@ def _weighted_mean(vectors: np.ndarray, weights: np.ndarray) -> np.ndarray:
     return (vectors * w).sum(axis=0, keepdims=True) / wsum
 
 # word2vec configuration
+@dataclass
 class W2VConfig:
     vector_size: int = 300
     window: int = 5

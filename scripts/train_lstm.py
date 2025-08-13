@@ -1,6 +1,10 @@
 """
     This file train/evaluate a BiLSTM author classifier 
 """
+import sys, inspect
+print(">>> RUNNING MODULE:", __name__, "FROM", inspect.getfile(sys.modules[__name__]))
+print(">>> ARGV:", sys.argv)
+
 import os
 import json
 import sys
@@ -20,14 +24,13 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import EXCERPT_FILE, TRAIN_DATA, LSTM_OUTPUT
 
-# model pieces
 from models.lstm import (
     LSTMClassifier, LSTMConfig,
     build_vocab, TextDataset, pad_collate,
     encode_texts, save_artifacts
 )
 
-# ---- config / output (defaults) ----
+# config / output
 CFG = LSTMConfig(emb_dim=200, hidden=256, layers=1, dropout=0.3,
                  pool="mean", max_len=256, epochs=8, batch_size=32,
                  lr=2e-3, weight_decay=0.0, seed=42)
@@ -67,7 +70,7 @@ def _bool_flag(parser, name, default):
 def parse_args():
     p = argparse.ArgumentParser(add_help=True)
 
-    # tweakable training/model knobs (override CFG fields only; everything else unchanged)
+    # tweakable training/model knobs
     p.add_argument("--emb-dim", type=int, default=CFG.emb_dim)
     p.add_argument("--hidden", type=int, default=CFG.hidden)
     p.add_argument("--layers", type=int, default=CFG.layers)
@@ -81,19 +84,19 @@ def parse_args():
     p.add_argument("--weight-decay", type=float, default=CFG.weight_decay)
     p.add_argument("--seed", type=int, default=CFG.seed)
 
-    # vocab/build flags (only if your LSTMConfig has these fields)
+    # vocab/build flags 
     p.add_argument("--min-count", type=int, default=getattr(CFG, "min_count", 1))
     p.add_argument("--vocab-max-size", type=int, default=getattr(CFG, "vocab_max_size", 50000))
     _bool_flag(p, "lowercase", getattr(CFG, "lowercase", True))
     _bool_flag(p, "alpha-only", getattr(CFG, "alpha_only", True))
 
-    # device (optional; only used if present in CFG)
+    # device 
     p.add_argument("--device", type=str, default=getattr(CFG, "device", "cuda" if torch.cuda.is_available() else "cpu"))
 
     return p.parse_args()
 
-def _apply_overrides(cfg: LSTMConfig, args):
-    # mutate the dataclass with CLI overrides (no other logic/output changes)
+def _apply_overrides(cfg, args):
+    # mutate the dataclass with CLI overrides
     cfg.emb_dim = args.emb_dim
     cfg.hidden = args.hidden
     cfg.layers = args.layers
@@ -117,6 +120,8 @@ def _apply_overrides(cfg: LSTMConfig, args):
 def main():
     args = parse_args()
     _apply_overrides(CFG, args)
+    print(">>> EFFECTIVE CFG:", asdict(CFG))
+    print(">>> ARGS.EPOCHS:", args.epochs)
 
     os.makedirs(LSTM_OUTPUT, exist_ok=True)
     set_seed(CFG.seed)
@@ -199,7 +204,7 @@ def main():
     print(rep)
     print("Confusion matrix:\n", cm)
 
-    # save artifacts / outputs (unchanged)
+    # save artifacts / outputs 
     save_artifacts(LSTM_OUTPUT, model, stoi, classes, CFG)
     pd.DataFrame({"text": Xte, "author": test_df["author"], "pred": preds_labels}).to_csv(
         os.path.join(LSTM_OUTPUT, "preds.csv"), index=False

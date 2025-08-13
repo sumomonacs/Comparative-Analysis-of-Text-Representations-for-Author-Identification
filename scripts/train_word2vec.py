@@ -20,7 +20,7 @@ from models.word2vec import Word2VecDocEmbed, W2VConfig
 # knobs
 SEED = 42
 CFG = W2VConfig(
-    vector_size=300,
+    vector_size=200,
     window=5,
     min_count=3,
     sg=1,                 # skip-gram

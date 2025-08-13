@@ -3,7 +3,7 @@
   "split_file": "data/train.json",
   "seed": 42,
   "w2v_config": {
-    "vector_size": 300,
+    "vector_size": 200,
     "window": 5,
     "min_count": 3,
     "sg": 1,
