@@ -1,10 +1,10 @@
 """
     This file does deterministic SBERT training on contrastive pairs
 Usage :
-  python -m scripts.train_sbert \
-    --encoder all-MiniLM-L6-v2 --proj-dim 256 --mlp-hidden 512 \
-    --dropout 0.2 --init-temp 10 --batch-size 32 --epochs 3 \
-    --lr 2e-5 --weight-decay 0.0 --freeze-layers 0 --seed 42
+python -m scripts.train_sbert \
+  --encoder all-mpnet-base-v2 --proj-dim 256 --mlp-hidden 512 \
+  --dropout 0.2 --init-temp 10 --batch-size 16 --epochs 3 \
+  --lr 2e-5 --weight-decay 0.0 --freeze-layers 0 --seed 42
 """
 
 import os
