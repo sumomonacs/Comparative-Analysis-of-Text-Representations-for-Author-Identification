@@ -1,0 +1,19 @@
+{
+  "data": "data/excerpts.csv",
+  "split_file": "data/train.json",
+  "seed": 42,
+  "w2v_config": {
+    "vector_size": 300,
+    "window": 5,
+    "min_count": 3,
+    "sg": 1,
+    "negative": 10,
+    "epochs": 10,
+    "doc_pool": "sif",
+    "sif_a": 0.001,
+    "remove_first_pc": true,
+    "clf_C": 1.0
+  },
+  "n_train": 749,
+  "n_test": 188
+}

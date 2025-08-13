@@ -1,0 +1,18 @@
+{
+  "data": "data/excerpts.csv",
+  "split_file": "data/train.json",
+  "seed": 42,
+  "tfidf": {
+    "max_features": 5000,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "min_df": 1,
+    "max_df": 1.0
+  },
+  "logreg": {
+    "C": 1.0
+  },
+  "n_test": 188
+}
