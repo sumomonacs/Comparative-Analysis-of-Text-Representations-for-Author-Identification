@@ -1,11 +1,11 @@
                   precision    recall  f1-score   support
 
-Charlotte Brontë       0.80      0.93      0.86        40
-   Edith Wharton       0.79      0.78      0.78        40
-    George Eliot       0.89      0.85      0.87        40
-     Henry James       0.91      0.79      0.85        38
-  Virginia Woolf       0.75      0.80      0.77        30
+Charlotte Brontë       0.81      0.97      0.89        40
+   Edith Wharton       0.90      0.93      0.91        40
+    George Eliot       0.97      0.88      0.92        40
+     Henry James       0.94      0.84      0.89        38
+  Virginia Woolf       0.93      0.90      0.92        30
 
-        accuracy                           0.83       188
-       macro avg       0.83      0.83      0.83       188
-    weighted avg       0.83      0.83      0.83       188
+        accuracy                           0.90       188
+       macro avg       0.91      0.90      0.91       188
+    weighted avg       0.91      0.90      0.90       188

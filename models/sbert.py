@@ -41,13 +41,8 @@ class PairDataset(Dataset):
 
 # Siamese Sentence-BERT model
 class SiameseModel(nn.Module):
-    """
-    SBERT encoder (HF Transformer via sentence-transformers)
-    -> projection head (nonlinear)
-    -> pair scorer (concat[z1*z2, |z1-z2|]) -> 1 logit
-    """
     def __init__(self, encoder_name = "all-MiniLM-L6-v2", proj_dim=256, mlp_hidden=512,
-        dropout=0.2, init_temp=10.0, device= None):
+        dropout=0.2, init_temp=0.07, device= None):
         super().__init__()
 
         if device is None:
@@ -75,13 +70,17 @@ class SiameseModel(nn.Module):
         # pair scorer
         self.scorer = nn.Sequential(
             nn.Linear(proj_dim * 2, mlp_hidden),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(mlp_hidden, 1, bias=False),
         )
 
         # learnable temperature to scale logits (useful with BCEWithLogitsLoss)
-        self.temp = nn.Parameter(torch.tensor([init_temp], dtype=torch.float32))
+        self.temp = nn.Parameter(torch.tensor(init_temp))   
+        self.logit_bias = nn.Parameter(torch.zeros(1))       
+        self.logit_scale = nn.Parameter(torch.tensor(1.0))   
+
+        self._device = device
 
     # ---- internals ----
     # tokenize with SBERT's tokenizer, run HF encoder with gradients, mean-pool with attention mask.
@@ -105,15 +104,19 @@ class SiameseModel(nn.Module):
         z1 = F.normalize(self.proj(e1), p=2, dim=-1)
         z2 = F.normalize(self.proj(e2), p=2, dim=-1)
         feats = torch.cat([z1 * z2, (z1 - z2).abs()], dim=-1)
-        logits = self.scorer(feats).squeeze(-1) * self.temp
+        logits = self.scorer(feats).squeeze(-1)
+        logits = logits / self.temp
+        # learnable scale + bias for calibration
+        logits = self.logit_scale * logits + self.logit_bias
         return logits  # (B,)
 
     # inference-only embeddings 
     @torch.inference_mode()
     def encode(self, texts, batch_size=64):
+        self.eval()  # ensure dropout etc. off
         embs = []
         for i in range(0, len(texts), batch_size):
-            embs.append(self._embed_train(texts[i:i+batch_size]))  # use same path as training
+            embs.append(self._embed_train(texts[i:i+batch_size]))
         e = torch.cat(embs, dim=0)
         z = F.normalize(self.proj(e), p=2, dim=-1)
         return z
