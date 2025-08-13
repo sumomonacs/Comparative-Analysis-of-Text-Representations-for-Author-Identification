@@ -126,23 +126,25 @@ def _eval_sklearn_prob(spec, excerpts):
     else:
         raise RuntimeError("Classifier exposes neither predict_proba nor decision_function")
 
-    order = np.argsort(-prob, axis=1)
-    topk = [[classes[j] for j in row[:3]] for row in order]
-
     emb_npy = os.path.join(art, "emb_test.npy")
     if os.path.exists(emb_npy):
-        embed = np.load(emb_npy)
+        embed = np.load(emb_npy).astype(np.float32, copy=False)  # <-- add astype
     else:
         if hasattr(X, "shape"):
             k = 2
             if X.shape[1] > 1:
                 k = min(50, X.shape[1] - 1)
-            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(X)
+            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(X).astype(np.float32, copy=False)  
         else:
             k = 2
             if prob.shape[1] > 1:
                 k = min(50, prob.shape[1] - 1)
-            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(prob)
+            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)  
+
+    order = np.argsort(-prob, axis=1)
+    topk = [[classes[j] for j in row[:3]] for row in order]
+
+
 
     return classes, topk, prob, embed
 
@@ -183,8 +185,22 @@ def _eval_lstm(spec, excerpts):
 
 # plot
 def _plot_tsne(Z, labels, title, out_png):
+    import numpy as np
+    from sklearn.manifold import TSNE
+    from sklearn.decomposition import TruncatedSVD
+    import matplotlib.pyplot as plt
+
+    Z = np.asarray(Z)
+    # coerce to float 
+    if Z.dtype.kind not in ("f", "c"):
+        Z = Z.astype(np.float32, copy=False)
+
+    # light SVD pre-reduction for very high dims
+    if Z.ndim != 2:
+        Z = Z.reshape(len(Z), -1)
     if Z.shape[1] > 50:
         Z = TruncatedSVD(n_components=50, random_state=SEED).fit_transform(Z)
+
     tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
     Y = tsne.fit_transform(Z)
 
@@ -201,6 +217,7 @@ def _plot_tsne(Z, labels, title, out_png):
     out_png.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_png, dpi=180)
     plt.close()
+
 
 
 #one model
