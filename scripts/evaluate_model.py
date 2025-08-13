@@ -8,6 +8,9 @@ import joblib
 import json
 import matplotlib.pyplot as plt
 from models.word2vec import W2VEncodeTransformer 
+import torch
+from pathlib import Path
+from models.sbert import SiameseModel
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -17,6 +20,8 @@ from scripts.config import (
 )
 
 # --------- registry ---------
+SEED = 42
+
 MODELS = {
     "tfidf": {
         "type": "sklearn_prob",
@@ -25,6 +30,7 @@ MODELS = {
         "vec_keys": ["vectorizer.joblib", "tfidf_vectorizer.joblib"],
         "scaler_keys": [],
     },
+
     "stylometry": {
         "type": "sklearn_prob",
         "artifacts": STYLO_OUTPUT,
@@ -32,6 +38,7 @@ MODELS = {
         "vec_keys": ["stylometry_vectorizer.joblib", "vectorizer.joblib"],
         "scaler_keys": ["scaler.joblib"],
     },
+
     "word2vec": {
         "type": "sklearn_prob",
         "artifacts": W2V_OUTPUT,
@@ -39,6 +46,7 @@ MODELS = {
         "vec_keys": ["vectorizer.joblib", "w2v_vectorizer.joblib", "idf_vectorizer.joblib"],
         "scaler_keys": ["scaler.joblib"],
     },
+
     "lstm": {
         "type": "lstm",
         "artifacts": LSTM_OUTPUT,
@@ -50,8 +58,6 @@ MODELS = {
     },
 
 }
-
-SEED = 42
 
 # --------- utils ---------
 def _find_first(art_dir, candidates):
@@ -201,25 +207,9 @@ def _eval_lstm(spec, excerpts):
     return classes, prob, embed
 
 def _eval_sbert_infer(spec, excerpts):
-    """
-    SBERT embed-only path that mirrors scripts.infer_author:
-    - load best.pt/last.pt
-    - build SiameseModel with same constructor args
-    - model.encode(texts, batch_size=32)
-    Returns (classes=None, prob=None, embed)
-    """
-    import torch
-    from pathlib import Path
-    from models.sbert import SiameseModel
-
     art = Path(spec["artifacts"])
     ckpt = art / "best.pt"
-    if not ckpt.exists():
-        alt = art / "last.pt"
-        assert alt.exists(), f"No SBERT checkpoint in {art} (looked for best.pt/last.pt)"
-        ckpt = alt
-
-    # load checkpoint (PyTorch 2.6-safe)
+    # load checkpoint 
     try:
         state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
     except TypeError:
@@ -234,7 +224,47 @@ def _eval_sbert_infer(spec, excerpts):
         else torch.device("cpu")
     )
 
-    # build model exactly like scripts/infer_author.py
+    # build model exactly like
+    model = SiameseModel( encoder_name="all-MiniLM-L6-v2", proj_dim=256, mlp_hidden=512, dropout=0.1, init_temp=10.0, device=device).to(device)
+    model.load_state_dict(weights, strict=False)
+    model.eval()
+
+    # encode excerpts
+    with torch.inference_mode():
+        embed = model.encode(excerpts, batch_size=32).detach().cpu().float().numpy()
+
+    classes, prob = None, None
+    return classes, prob, embed
+
+def _eval_sbert_centroid(spec, excerpts):
+    """
+    Compute SBERT class probabilities via cosine to TRAIN centroids.
+    Returns (classes, prob[n,k], embed[n,d]).
+    """
+    import json, numpy as np, torch, pandas as pd
+    from scripts.config import EXCERPT_FILE, TRAIN_DATA
+
+    art = Path(spec["artifacts"])
+    ckpt_best = art / "best.pt"
+    ckpt_last = art / "last.pt"
+    ckpt = ckpt_best if ckpt_best.exists() else ckpt_last
+    assert ckpt.exists(), f"No SBERT checkpoint in {art} (need best.pt or last.pt)"
+
+    # load checkpoint
+    try:
+        state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    except TypeError:
+        state = torch.load(str(ckpt), map_location="cpu")
+    raw = state.get("model_state_dict", state)
+    weights = {k.replace("module.", "", 1): v for k, v in raw.items()}
+
+    device = (
+        torch.device("cuda") if torch.cuda.is_available()
+        else torch.device("mps") if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
+
+    # build model (matches your sbert.SiameseModel defaults)
     model = SiameseModel(
         encoder_name="all-MiniLM-L6-v2",
         proj_dim=256, mlp_hidden=512, dropout=0.1, init_temp=10.0, device=device
@@ -242,13 +272,36 @@ def _eval_sbert_infer(spec, excerpts):
     model.load_state_dict(weights, strict=False)
     model.eval()
 
-    # encode excerpts (mirrors _rank_authors_batch → model.encode)
-    with torch.inference_mode():
-        embed = model.encode(excerpts, batch_size=32).detach().cpu().float().numpy()
+    # ---- TRAIN centroids from frozen split ----
+    df = pd.read_csv(EXCERPT_FILE).reset_index(drop=True)
+    with open(TRAIN_DATA, "r", encoding="utf-8") as f:
+        split = json.load(f)
+    test_idx = sorted(int(i) for i in split["test_index"])
+    mask = np.zeros(len(df), dtype=bool); mask[test_idx] = True
+    train_df = df.loc[~mask, ["excerpt", "author"]].reset_index(drop=True)
 
-    classes, prob = None, None
+    authors = sorted(train_df["author"].unique().tolist())
+    centroids = []
+    for a in authors:
+        texts = train_df.loc[train_df["author"] == a, "excerpt"].tolist()
+        if not texts:
+            centroids.append(np.zeros((256,), dtype="float32"))
+            continue
+        Z = model.encode(texts, batch_size=32).detach().cpu().numpy().astype("float32", copy=False)
+        c = Z.mean(axis=0)
+        n = np.linalg.norm(c) + 1e-12
+        centroids.append((c / n).astype("float32"))
+    C = np.stack(centroids, axis=0)  # [K, D]
+
+    # ---- UNSEEN embeddings + cosine → softmax ----
+    Zq = model.encode(excerpts, batch_size=32).detach().cpu().numpy().astype("float32", copy=False)  # [N, D]
+    sims = Zq @ C.T                                # cosine (encode() already L2-normalizes proj)
+    sims = sims - sims.max(axis=1, keepdims=True)  # stability
+    e = np.exp(sims); prob = e / np.clip(e.sum(axis=1, keepdims=True), 1e-12, None)
+
+    classes = authors
+    embed = Zq
     return classes, prob, embed
-
 
 
 # --------- main ---------
@@ -275,10 +328,9 @@ def main():
         if spec["type"] == "lstm":
             classes, prob, embed = _eval_lstm(spec, excerpts)
         elif spec["type"] == "sbert":
-            classes, prob, embed = _eval_sbert_infer(spec, excerpts)
+            classes, prob, embed = _eval_sbert_centroid(spec, excerpts)
         else:
             classes, prob, embed = _eval_sklearn_prob(spec, excerpts)
-
 
         order = np.argsort(-prob, axis=1)
         topk = [[classes[j] for j in row[:3]] for row in order]

@@ -7,7 +7,7 @@
     "hidden": 256,
     "layers": 1,
     "dropout": 0.3,
-    "pool": "mean",
+    "pool": "max",
     "max_len": 256,
     "min_count": 2,
     "vocab_max_size": 30000,
@@ -15,7 +15,7 @@
     "alpha_only": true,
     "batch_size": 32,
     "epochs": 8,
-    "lr": 0.002,
+    "lr": 0.2,
     "weight_decay": 0.0,
     "seed": 42,
     "device": "cpu"
