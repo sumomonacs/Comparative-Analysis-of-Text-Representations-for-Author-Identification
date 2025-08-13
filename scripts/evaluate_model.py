@@ -1,17 +1,18 @@
 import os
-from pathlib import Path
 import argparse
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.manifold import TSNE
 import joblib
+import json
 import matplotlib.pyplot as plt
+from models.word2vec import W2VEncodeTransformer 
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import (
-    INFERENCE_FILE,
+    INFERENCE_FILE, EVOLVE_DIR, PIC_DIR, 
     TFIDF_OUTPUT, STYLO_OUTPUT, W2V_OUTPUT, LSTM_OUTPUT, SBERT_OUTPUT,
 )
 
@@ -49,7 +50,7 @@ MODELS = {
     },
 
 }
-OUT_ROOT = Path("results/eval_unseen")
+
 SEED = 42
 
 # --------- utils ---------
@@ -86,50 +87,89 @@ def _safe_tsne(Z, labels, title, out_png):
     tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate=200.0, perplexity=perplexity)
     Y = tsne.fit_transform(Z)
 
-    authors = sorted(set(labels))
-    color_map = {a: i for i, a in enumerate(authors)}
+    # fixed author order and colors
+    fixed_authors = [
+        "Charlotte Brontë",
+        "Edith Wharton",
+        "George Eliot",
+        "Henry James",
+        "Virginia Woolf"
+    ]
+    fixed_colors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
+    color_map = {a: c for a, c in zip(fixed_authors, fixed_colors)}
+
     colors = [color_map[a] for a in labels]
 
     plt.figure(figsize=(7, 6))
-    plt.scatter(Y[:, 0], Y[:, 1], c=colors, s=10, alpha=0.85)
-    handles = [plt.Line2D([0], [0], marker='o', linestyle='', markersize=6, label=a) for a in authors]
-    plt.legend(handles, authors, loc="best", fontsize=8, frameon=True)
+    for author in fixed_authors:
+        mask = [a == author for a in labels]
+        plt.scatter(
+            Y[mask, 0], Y[mask, 1],
+            c=color_map[author], s=10, alpha=0.85, label=author
+        )
+
+    plt.legend(loc="best", fontsize=8, frameon=True)
     plt.title(title)
     plt.tight_layout()
-    out_png.parent.mkdir(parents=True, exist_ok=True)
+    out_dir = os.path.dirname(out_png)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     plt.savefig(out_png, dpi=180)
     plt.close()
 
+
 # --------- adapters ---------
 def _eval_sklearn_prob(spec, excerpts):
-
     art = spec["artifacts"]
 
     # prefer a full pipeline that accepts raw text
-    clf_path = _find_first(art, ["pipeline.joblib", "classifier.joblib", "model.joblib", "clf.joblib", "logreg.joblib"])
-    if not clf_path:
-        raise FileNotFoundError(f"No classifier pipeline found in {art}")
-    clf = joblib.load(clf_path)
-
-    # get probabilities directly from raw text
-    if hasattr(clf, "predict_proba"):
-        prob = clf.predict_proba(excerpts)
+    pipe_path = _find_first(art, ["pipeline.joblib", "pipe.joblib"])
+    if pipe_path:
+        clf = joblib.load(pipe_path)
+        prob = clf.predict_proba(excerpts) if hasattr(clf, "predict_proba") \
+               else _decision_to_prob(clf.decision_function(excerpts))
         classes = getattr(clf, "classes_", None)
         if classes is None and hasattr(clf, "steps"):
             classes = getattr(clf.steps[-1][1], "classes_", None)
         classes = classes.tolist() if classes is not None else list(range(prob.shape[1]))
     else:
-        # rare fallback: decision_function
-        scores = clf.decision_function(excerpts)
-        e = np.exp(scores - scores.max(axis=1, keepdims=True))
-        prob = e / e.sum(axis=1, keepdims=True)
+        # fallback: separate vectorizer (+ optional scaler) + classifier
+        clf_path = _find_first(art, spec.get("clf_keys", []))
+        vec_path = _find_first(art, spec.get("vec_keys", []))
+        assert clf_path, f"No classifier joblib found in {art}"
+        assert vec_path, f"No vectorizer joblib found in {art} (needed if no pipeline)"
+
+        clf = joblib.load(clf_path)
+        vectorizer = joblib.load(vec_path)
+
+        X = vectorizer.transform(excerpts)  # -> 2D feature matrix
+
+        scaler_path = _find_first(art, spec.get("scaler_keys", []))
+        if scaler_path:
+            scaler = joblib.load(scaler_path)
+            # handle sparse vs dense
+            X = scaler.transform(X.toarray() if hasattr(X, "toarray") else X)
+
+        if hasattr(clf, "predict_proba"):
+            prob = clf.predict_proba(X)
+        elif hasattr(clf, "decision_function"):
+            prob = _decision_to_prob(clf.decision_function(X))
+        else:
+            raise RuntimeError("Classifier has neither predict_proba nor decision_function")
+
         classes = getattr(clf, "classes_", list(range(prob.shape[1])))
 
-    # make t‑SNE embedding from current probs (always length-matched)
+    # compact embedding source for t‑SNE (always length-matched)
     k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
     embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
-
     return classes, prob, embed
+
+def _decision_to_prob(scores):
+    scores = np.asarray(scores)
+    if scores.ndim == 1:  # binary: shape (n,)
+        scores = np.stack([-scores, scores], axis=1)
+    e = np.exp(scores - scores.max(axis=1, keepdims=True))
+    return e / e.sum(axis=1, keepdims=True)
 
 def _eval_lstm(spec, excerpts):
     import torch
@@ -220,6 +260,7 @@ def main():
     df = _load_unseen()
     excerpts = df["excerpt"].tolist()
     gold = df["author"].tolist()
+    runs_summary = []
 
     for name in [m.strip() for m in args.models.split(",") if m.strip()]:
         if name not in MODELS:
@@ -248,7 +289,61 @@ def main():
         print(f" Top-1 acc: {top1_acc:.4f}")
         print(f" Top-2 acc: {top2_acc:.4f}")
 
-        out_png = OUT_ROOT / f"{name}-tsne.png"
+        # build per-example frame for breakdowns (to aggregate)
+        per_example = pd.DataFrame({
+            "author": gold,
+            "book": df["book"].tolist(),
+            "bucket": df["bucket"].tolist(),
+            "pred_top1": top1,
+        })
+        per_example["hit_top1"] = per_example["author"] == per_example["pred_top1"]
+        per_example["hit_top2"] = [g in c[:2] for g, c in zip(gold, topk)]
+
+        # aggregate to the exact JSON shape you want
+        by_author = (
+            per_example.groupby("author")[["hit_top1", "hit_top2"]]
+            .agg(["count", "mean"])
+        )
+        # flatten and cast
+        by_author = {
+            a: {"n": int(row[("hit_top1", "count")]),
+                "top1_acc": float(row[("hit_top1", "mean")]),
+                "top2_acc": float(row[("hit_top2", "mean")])}
+            for a, row in by_author.iterrows()
+        }
+
+        by_book = (
+            per_example.groupby("book")[["hit_top1", "hit_top2"]]
+            .agg(["count", "mean"])
+        )
+        by_book = {
+            b: {"n": int(row[("hit_top1", "count")]),
+                "top1_acc": float(row[("hit_top1", "mean")]),
+                "top2_acc": float(row[("hit_top2", "mean")])}
+            for b, row in by_book.iterrows()
+        }
+
+        by_bucket = (
+            per_example.groupby("bucket")[["hit_top1", "hit_top2"]]
+            .agg(["count", "mean"])
+        )
+        by_bucket = {
+            k: {"n": int(row[("hit_top1", "count")]),
+                "top1_acc": float(row[("hit_top1", "mean")]),
+                "top2_acc": float(row[("hit_top2", "mean")])}
+            for k, row in by_bucket.iterrows()
+        }
+
+        runs_summary.append({
+            "model": name,
+            "overall": {"n": int(len(gold)), "top1_acc": float(top1_acc), "top2_acc": float(top2_acc)},
+            "by_author": by_author,
+            "by_book": by_book,
+            "by_bucket": by_bucket,
+        })
+
+
+        out_png = os.path.join(PIC_DIR, f"{name}-tsne.png")
         # final guard to ensure lengths match (they should)
         if embed.shape[0] != len(gold):
             # fallback: derive from prob so it always matches
@@ -256,6 +351,13 @@ def main():
             embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
         _safe_tsne(embed, gold, title=f"{name} — t-SNE (unseen)", out_png=out_png)
         print(f" Saved t-SNE to {out_png}")
+    
+    # write exactly the minimal JSON you asked for
+    metrics_path = os.path.join(EVOLVE_DIR,  f"{name}-metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(runs_summary, f, indent=2, ensure_ascii=False)
+    print(f" Wrote JSON metrics to {metrics_path}")
+
 
 if __name__ == "__main__":
     main()

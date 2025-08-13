@@ -19,3 +19,7 @@ STYLO_OUTPUT = "results/stylometry"
 W2V_OUTPUT = "results/word2vec"
 LSTM_OUTPUT = "results/lstm"
 SBERT_OUTPUT = "results/sbert"
+
+# EVALUATION FILE
+EVOLVE_DIR = "results/eval_metrics"
+PIC_DIR = "results/eval_unseen"

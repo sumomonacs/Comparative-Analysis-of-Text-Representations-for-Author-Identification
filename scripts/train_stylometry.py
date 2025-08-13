@@ -1,6 +1,5 @@
 """
     This file trains and evaluates Stylometry + Logistic Regression.
-    Usage: python -m scripts.train_stylometry
 """
 
 import os

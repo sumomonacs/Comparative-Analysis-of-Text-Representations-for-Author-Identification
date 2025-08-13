@@ -12,31 +12,30 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report, con
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
-from sklearn.base import BaseEstimator, TransformerMixin
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import EXCERPT_FILE, TRAIN_DATA, W2V_OUTPUT
 
-from models.word2vec import Word2VecDocEmbed, W2VConfig
+from models.word2vec import Word2VecDocEmbed, W2VConfig, W2VEncodeTransformer
 
 
 # knobs
 SEED = 42
 CFG = W2VConfig(
-    vector_size=200,
-    window=5,
+    vector_size=500,
+    window=9,
     min_count=7,
     sg=1,                 # skip-gram
     negative=10,
-    epochs=10,
+    epochs=8,
     workers=4,
     lowercase=True,
     alpha_only=True,
-    doc_pool="sif",       # "mean" | "tfidf" | "sif"
+    doc_pool="tfidf",       # "mean" | "tfidf" | "sif"
     sif_a=1e-3,
     remove_first_pc=True,
-    clf_C=1,
+    clf_C=0.1,
     seed=SEED,
 )
 
@@ -63,19 +62,6 @@ def serialize_meta(meta):
     return meta
 
 
-class W2VEncodeTransformer(BaseEstimator, TransformerMixin):
-    """
-    Sklearn transformer that uses a fitted Word2VecDocEmbed to encode raw texts.
-    """
-    def __init__(self, fitted_model):
-        self.fitted_model = fitted_model  
-
-    def fit(self, X, y=None):
-        return self  # model is already fitted
-
-    def transform(self, X):
-        return np.asarray(self.fitted_model.encode(list(X)))  # (n_samples, n_dims)
-
 
 def main():
     os.makedirs(W2V_OUTPUT, exist_ok=True)
@@ -100,6 +86,16 @@ def main():
 
     # train model
     model = Word2VecDocEmbed(CFG).fit(X_train, y_train)
+    pipe = Pipeline([
+    ("w2v_encode", W2VEncodeTransformer(model)),
+    ("scaler", StandardScaler(with_mean=True, with_std=True)),
+    ("classifier", LogisticRegression(max_iter=1000, C=CFG.clf_C)),
+])
+    pipe.fit(X_train, y_train)
+
+    os.makedirs(W2V_OUTPUT, exist_ok=True)
+    joblib.dump(pipe, os.path.join(W2V_OUTPUT, "pipeline.joblib"))
+    joblib.dump(pipe, os.path.join(W2V_OUTPUT, "classifier.joblib"))
 
     # evaluate
     preds = model.predict(X_test)
@@ -132,7 +128,6 @@ def main():
     # dump under names the evaluator already looks for
     joblib.dump(pipe, os.path.join(W2V_OUTPUT, "pipeline.joblib"))
     joblib.dump(pipe, os.path.join(W2V_OUTPUT, "classifier.joblib"))  # alias, loaded first by many configs
-    print("Exported:", sorted(os.listdir(W2V_OUTPUT)))
 
     # save meta for reproducibility
     meta = {

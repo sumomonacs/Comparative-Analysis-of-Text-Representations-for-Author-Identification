@@ -1,0 +1,101 @@
+[
+  {
+    "model": "word2vec",
+    "overall": {
+      "n": 300,
+      "top1_acc": 0.5233333333333333,
+      "top2_acc": 0.77
+    },
+    "by_author": {
+      "Charlotte Brontë": {
+        "n": 60,
+        "top1_acc": 0.55,
+        "top2_acc": 0.7666666666666667
+      },
+      "Edith Wharton": {
+        "n": 60,
+        "top1_acc": 0.4166666666666667,
+        "top2_acc": 0.75
+      },
+      "George Eliot": {
+        "n": 60,
+        "top1_acc": 0.45,
+        "top2_acc": 0.7666666666666667
+      },
+      "Henry James": {
+        "n": 60,
+        "top1_acc": 0.65,
+        "top2_acc": 0.8666666666666667
+      },
+      "Virginia Woolf": {
+        "n": 60,
+        "top1_acc": 0.55,
+        "top2_acc": 0.7
+      }
+    },
+    "by_book": {
+      "bronte_shirley": {
+        "n": 30,
+        "top1_acc": 0.43333333333333335,
+        "top2_acc": 0.6666666666666666
+      },
+      "bronte_the_professor": {
+        "n": 30,
+        "top1_acc": 0.6666666666666666,
+        "top2_acc": 0.8666666666666667
+      },
+      "eliot_adam_bede": {
+        "n": 30,
+        "top1_acc": 0.4,
+        "top2_acc": 0.7
+      },
+      "eliot_silas_marner": {
+        "n": 30,
+        "top1_acc": 0.5,
+        "top2_acc": 0.8333333333333334
+      },
+      "james_the_ambassadors": {
+        "n": 30,
+        "top1_acc": 0.7333333333333333,
+        "top2_acc": 0.9666666666666667
+      },
+      "james_the_beast_in_the_jungle": {
+        "n": 30,
+        "top1_acc": 0.5666666666666667,
+        "top2_acc": 0.7666666666666667
+      },
+      "wharton_ethan_frome": {
+        "n": 30,
+        "top1_acc": 0.5333333333333333,
+        "top2_acc": 0.8666666666666667
+      },
+      "wharton_the_reef": {
+        "n": 30,
+        "top1_acc": 0.3,
+        "top2_acc": 0.6333333333333333
+      },
+      "woolf_night_and_day": {
+        "n": 30,
+        "top1_acc": 0.4,
+        "top2_acc": 0.5333333333333333
+      },
+      "woolf_the_voyage_out": {
+        "n": 30,
+        "top1_acc": 0.7,
+        "top2_acc": 0.8666666666666667
+      }
+    },
+    "by_bucket": {
+      "long": {
+        "n": 200,
+        "top1_acc": 0.56,
+        "top2_acc": 0.785
+      },
+      "short": {
+        "n": 100,
+        "top1_acc": 0.45,
+        "top2_acc": 0.74
+      }
+    }
+  }
+]

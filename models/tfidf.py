@@ -1,18 +1,8 @@
-
 """
     This file defines TF‑IDF + Logistic Regression utilities.
-
-Exposes:
-- preprocess_batch(texts)
-- fit_tfidf_logreg(X_train, y_train, *, seed=42, tfidf_kwargs=None, C=1.0)
-- predict(vectorizer, clf, X_texts)
-- encode(vectorizer, X_texts, svd_dim=128, seed=42) -> dense embeddings for t‑SNE
-- save_artifacts(out_dir, vectorizer, clf)
-- load_artifacts(out_dir) -> (vectorizer, clf)
 """
 
 import os
-from typing import List, Tuple, Dict, Any, Optional
 import joblib
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -73,12 +63,12 @@ def encode(vec, X_texts, svd_dim=128, seed= 42):
     Z = svd.fit_transform(X)
     return Z
 
-def save_artifacts(out_dir: str, vec: TfidfVectorizer, clf: LogisticRegression) -> None:
+def save_artifacts(out_dir, vec, clf):
     os.makedirs(out_dir, exist_ok=True)
     joblib.dump(vec, os.path.join(out_dir, "vectorizer.joblib"))
     joblib.dump(clf, os.path.join(out_dir, "classifier.joblib"))
 
-def load_artifacts(out_dir: str) -> Tuple[TfidfVectorizer, LogisticRegression]:
+def load_artifacts(out_dir):
     vec = joblib.load(os.path.join(out_dir, "vectorizer.joblib"))
     clf = joblib.load(os.path.join(out_dir, "classifier.joblib"))
     return vec, clf

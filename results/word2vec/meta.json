@@ -3,16 +3,16 @@
   "split_file": "data/train.json",
   "seed": 42,
   "w2v_config": {
-    "vector_size": 200,
-    "window": 5,
+    "vector_size": 500,
+    "window": 9,
     "min_count": 7,
     "sg": 1,
     "negative": 10,
-    "epochs": 10,
-    "doc_pool": "sif",
+    "epochs": 8,
+    "doc_pool": "tfidf",
     "sif_a": 0.001,
     "remove_first_pc": true,
-    "clf_C": 1
+    "clf_C": 0.1
   },
   "n_train": 749,
   "n_test": 188

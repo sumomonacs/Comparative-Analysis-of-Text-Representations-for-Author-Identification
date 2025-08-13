@@ -14,11 +14,11 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import EXCERPT_FILE, TRAIN_DATA, TFIDF_OUTPUT
 
-from models.tfidf import preprocess_batch, fit_tfidf_logreg, predict, encode, save_artifacts
+from models.tfidf import preprocess_batch, fit_tfidf_logreg, predict, save_artifacts
 
 # model/vectorizer knobs 
 SEED = 42
-TFIDF_KW = dict(max_features=5000, ngram_range=(1, 2), min_df=1, max_df=1.0)
+TFIDF_KW = dict(max_features=6000, ngram_range=(1, 2), min_df=1, max_df=1.0)
 LOGREG_C = 1.0
 
 # load the freezing json file
@@ -77,7 +77,7 @@ def main():
     print(report)
     print("Confusion matrix:\n", cm)
 
-    # 6) Save artifacts and outputs
+    # save artifacts and outputs
     save_artifacts(TFIDF_OUTPUT, vec, clf)
 
     pd.DataFrame({"text": test_df["excerpt"], "author": y_test, "pred": preds}).to_csv(
@@ -91,12 +91,13 @@ def main():
     # save meta for reproducibility
     meta = {
         "data": EXCERPT_FILE,
-        "split_file": TRAIN_DATA if os.path.exists(TRAIN_DATA) else None,
+        "split_file": TRAIN_DATA,
         "seed": SEED,
         "tfidf": TFIDF_KW,
         "logreg": {"C": LOGREG_C},
         "n_test": len(y_test),
     }
+    
     with open("results/tfidf/meta.json", "w", encoding="utf-8") as f:
         json.dump(serialize_meta(meta), f, indent=2)
 

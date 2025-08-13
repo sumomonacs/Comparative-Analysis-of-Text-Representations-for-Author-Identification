@@ -17,10 +17,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.base import BaseEstimator, TransformerMixin
 
 import nltk
 from nltk.tokenize import word_tokenize
-# ensure required tokenizer is available (runs once per environment)
 for pkg in ["punkt", "punkt_tab"]:
     try:
         nltk.data.find(f"tokenizers/{pkg}")
@@ -76,6 +76,12 @@ class W2VConfig:
     remove_first_pc: bool = True
     clf_C: float = 1.0
     seed: int = 42
+
+class W2VEncodeTransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, fitted_model):
+        self.fitted_model = fitted_model
+    def fit(self, X, y=None): return self
+    def transform(self, X):   return np.asarray(self.fitted_model.encode(list(X)))
 
 class Word2VecDocEmbed:
     """
