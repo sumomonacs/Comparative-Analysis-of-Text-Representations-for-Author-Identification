@@ -5,6 +5,8 @@
 
 import os
 import json
+import joblib
+from scipy import sparse
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +14,10 @@ import pandas as pd
 from sklearn.manifold import TSNE
 from sklearn.decomposition import TruncatedSVD
 import matplotlib.pyplot as plt
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from models.lstm import load_artifacts, TextDataset, pad_collate, encode_texts
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -86,24 +92,24 @@ def _topk_hits(y_true, y_topk, k):
 
 # adapters
 def _eval_sklearn_prob(spec, excerpts):
-    import joblib
     art = spec["artifacts"]
 
     clf_path = _find_first(art, spec.get("clf_keys", ["classifier.joblib", "clf.joblib", "logreg.joblib"]))
-    assert clf_path, "No classifier joblib found in %s" % art
+    assert clf_path, f"No classifier joblib found in {art}"
     clf = joblib.load(clf_path)
 
+    # if the classifier is a pipeline, prefer giving it raw text
     vec = None
-    if "vec_keys" in spec:
-        vec_path = _find_first(art, spec["vec_keys"])
-        if vec_path:
-            vec = joblib.load(vec_path)
-
     scaler = None
-    if "scaler_keys" in spec:
-        scaler_path = _find_first(art, spec["scaler_keys"])
-        if scaler_path:
-            scaler = joblib.load(scaler_path)
+    if hasattr(clf, "predict_proba") and not hasattr(clf, "steps"):
+        if "vec_keys" in spec:
+            vec_path = _find_first(art, spec["vec_keys"])
+            if vec_path:
+                vec = joblib.load(vec_path)
+        if "scaler_keys" in spec:
+            scaler_path = _find_first(art, spec["scaler_keys"])
+            if scaler_path:
+                scaler = joblib.load(scaler_path)
 
     if vec is not None:
         X = vec.transform(excerpts)
@@ -113,8 +119,9 @@ def _eval_sklearn_prob(spec, excerpts):
             except Exception:
                 X = scaler.transform(X.toarray())
     else:
-        X = excerpts  # hope the clf is a Pipeline or can handle raw text
+        X = excerpts  # pipeline or classifier that handles raw text
 
+    # probabilities
     if hasattr(clf, "predict_proba"):
         prob = clf.predict_proba(X)
         classes = clf.classes_.tolist()
@@ -126,33 +133,34 @@ def _eval_sklearn_prob(spec, excerpts):
     else:
         raise RuntimeError("Classifier exposes neither predict_proba nor decision_function")
 
+    # embeddings for t‑SNE
     emb_npy = os.path.join(art, "emb_test.npy")
     if os.path.exists(emb_npy):
-        embed = np.load(emb_npy).astype(np.float32, copy=False)  # <-- add astype
+        embed = np.load(emb_npy).astype(np.float32, copy=False)
     else:
-        if hasattr(X, "shape"):
-            k = 2
-            if X.shape[1] > 1:
-                k = min(50, X.shape[1] - 1)
-            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(X).astype(np.float32, copy=False)  
+        # If X is vectorized text, reduce with SVD; else fall back to prob SVD
+        if isinstance(X, (np.ndarray, list)) and not (hasattr(X, "shape") and len(getattr(X, "shape")) == 2):
+            base = prob
         else:
-            k = 2
-            if prob.shape[1] > 1:
-                k = min(50, prob.shape[1] - 1)
-            embed = TruncatedSVD(n_components=max(2, k), random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)  
+            if sparse.issparse(X):
+                X = X.tocsr()
+            base = X
+        # Choose SVD components conservatively
+        if hasattr(base, "shape"):
+            d = base.shape[1] if len(base.shape) == 2 else 2
+            k = max(2, min(50, d - 1)) if d > 1 else 2
+            embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(base)
+        else:
+            embed = TruncatedSVD(n_components=2, random_state=SEED).fit_transform(prob)
+        embed = embed.astype(np.float32, copy=False)
 
     order = np.argsort(-prob, axis=1)
-    topk = [[classes[j] for j in row[:3]] for row in order]
-
-
-
+    topk = [[classes[j] for j in row[:3]] for row in order]  # keep 3 for flexibility
     return classes, topk, prob, embed
 
+
 def _eval_lstm(spec, excerpts):
-    import torch
-    import torch.nn.functional as F
-    from torch.utils.data import DataLoader
-    from models.lstm import load_artifacts, TextDataset, pad_collate, encode_texts
+
 
     art = spec["artifacts"]
     model, stoi, classes, cfg = load_artifacts(art)
@@ -176,32 +184,29 @@ def _eval_lstm(spec, excerpts):
 
     emb_npy = os.path.join(art, "emb_test.npy")
     if os.path.exists(emb_npy):
-        embed = np.load(emb_npy)
+        embed = np.load(emb_npy).astype(np.float32, copy=False)
     else:
-        embed = encode_texts(model, excerpts, stoi, classes, cfg)
+        embed = encode_texts(model, excerpts, stoi, classes, cfg).astype(np.float32, copy=False)
 
     return classes, topk, prob, embed
 
-
-# plot
 def _plot_tsne(Z, labels, title, out_png):
-    import numpy as np
-    from sklearn.manifold import TSNE
-    from sklearn.decomposition import TruncatedSVD
-    import matplotlib.pyplot as plt
 
     Z = np.asarray(Z)
-    # coerce to float 
+    if Z.ndim != 2:
+        Z = Z.reshape(len(Z), -1)
     if Z.dtype.kind not in ("f", "c"):
         Z = Z.astype(np.float32, copy=False)
 
-    # light SVD pre-reduction for very high dims
-    if Z.ndim != 2:
-        Z = Z.reshape(len(Z), -1)
+    # light pre‑reduction for very high dims
     if Z.shape[1] > 50:
-        Z = TruncatedSVD(n_components=50, random_state=SEED).fit_transform(Z)
+        Z = TruncatedSVD(n_components=50, random_state=SEED).fit_transform(Z).astype(np.float32, copy=False)
 
-    tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
+    n = Z.shape[0]
+    # t‑SNE requires perplexity < n_samples; keep it modest
+    perplexity = max(5, min(30, (n - 1) // 3)) if n > 10 else max(2, (n - 1) // 3 or 2)
+
+    tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto", perplexity=perplexity)
     Y = tsne.fit_transform(Z)
 
     authors = sorted(set(labels))
@@ -217,7 +222,6 @@ def _plot_tsne(Z, labels, title, out_png):
     out_png.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_png, dpi=180)
     plt.close()
-
 
 
 #one model
@@ -244,20 +248,24 @@ def _evaluate_one(name, spec, df):
 
     top1 = [row[0] for row in topk]
     top1_acc = float(np.mean([g == p for g, p in zip(gold, top1)]))
-    top3_acc = float(_topk_hits(gold, topk, k=3))
+    top2_acc = float(_topk_hits(gold, topk, k=2))
+    top3_acc = float(_topk_hits(gold, topk, k=3))  # optional, keep if useful
 
     df_pred = pd.DataFrame({
         "excerpt": excerpts,
         "author": gold,
         "bucket": buckets,
         "pred_top1": top1,
-        "in_top3": [g in row for g, row in zip(gold, topk)],
+        "in_top2": [g in row[:2] for g, row in zip(gold, topk)],
+        "in_top3": [g in row[:3] for g, row in zip(gold, topk)],
     })
+
     by_bucket = (
         df_pred.groupby("bucket")
         .agg(
             n=("author", "size"),
             top1_acc=("pred_top1", lambda s: float(np.mean(df_pred.loc[s.index, "author"] == s))),
+            top2_acc=("in_top2", "mean"),
             top3_acc=("in_top3", "mean"),
         )
         .reset_index()
@@ -266,11 +274,15 @@ def _evaluate_one(name, spec, df):
     df_pred.to_csv(out_dir / "preds.csv", index=False)
     by_bucket.to_csv(out_dir / "metrics_by_bucket.csv", index=False)
     with open(out_dir / "metrics_overall.json", "w") as f:
-        json.dump({"model": name, "n": len(gold), "top1_acc": top1_acc, "top3_acc": top3_acc}, f, indent=2)
+        json.dump(
+            {"model": name, "n": len(gold), "top1_acc": top1_acc, "top2_acc": top2_acc, "top3_acc": top3_acc},
+            f, indent=2
+        )
 
-    print(f" Overall: top1={top1_acc:.4f}  top3={top3_acc:.4f}")
+    print(f" Overall: top1={top1_acc:.4f}  top2={top2_acc:.4f}  top3={top3_acc:.4f}")
     print(" By bucket:")
-    print(by_bucket.to_string(index=False))
+    print(by_bucket[["bucket", "n", "top1_acc", "top2_acc", "top3_acc"]].to_string(index=False))
+
 
     _plot_tsne(embed, gold, title=f"{name} — t‑SNE (unseen)", out_png=out_dir / "tsne.png")
     print(f" Saved: {out_dir/'preds.csv'}, {out_dir/'metrics_by_bucket.csv'}, "
