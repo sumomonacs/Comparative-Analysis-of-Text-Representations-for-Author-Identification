@@ -215,12 +215,7 @@ def main():
         f.write(rep)
     with open(os.path.join(LSTM_OUTPUT, "metrics.json"), "w") as f:
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
-
-    # export embeddings for t-SNE
-    Z = encode_texts(model, Xte, stoi, classes, cfg)
-    np.save(os.path.join(LSTM_OUTPUT, "emb_test.npy"), Z.astype(np.float32))
     
-
     # save meta
     meta = {
         "data": EXCERPT_FILE,

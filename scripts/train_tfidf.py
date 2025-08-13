@@ -88,10 +88,6 @@ def main():
     with open(os.path.join(TFIDF_OUTPUT, "metrics.json"), "w") as f:
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
 
-    # dense embeddings for t‑SNE
-    Z = encode(vec, X_test, svd_dim=128, seed=SEED)
-    np.save(os.path.join(TFIDF_OUTPUT, "emb_test.npy"), Z.astype(np.float32))
-
     # save meta for reproducibility
     meta = {
         "data": EXCERPT_FILE,

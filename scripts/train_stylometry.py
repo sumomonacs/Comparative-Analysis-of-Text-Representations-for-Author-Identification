@@ -122,10 +122,6 @@ def main():
     with open(os.path.join(STYLO_OUTPUT, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
 
-    # dump test feature matrix for t‑SNE 
-    np.save(os.path.join(STYLO_OUTPUT, "emb_test.npy"), F_test.astype(np.float32))
-
-
     # save meta for reproducibility
     meta = {
         "data": EXCERPT_FILE,

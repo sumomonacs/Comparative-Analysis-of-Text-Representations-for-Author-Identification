@@ -112,10 +112,6 @@ def main():
     with open(os.path.join(W2V_OUTPUT, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
 
-    # save doc embeddings of test set for downstream plots
-    X_test_emb = model.encode(X_test)
-    np.save(os.path.join(W2V_OUTPUT, "emb_test.npy"), X_test_emb.astype(np.float32))
-
     # save meta for reproducibility
     meta = {
         "data": EXCERPT_FILE,
