@@ -1,16 +1,12 @@
 """
     This file train/evaluate a BiLSTM author classifier 
 """
-import sys, inspect
-print(">>> RUNNING MODULE:", __name__, "FROM", inspect.getfile(sys.modules[__name__]))
-print(">>> ARGV:", sys.argv)
-
 import os
 import json
 import sys
 import random
 from pathlib import Path
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import numpy as np
 import pandas as pd
@@ -31,9 +27,9 @@ from models.lstm import (
 )
 
 # config / output
-CFG = LSTMConfig(emb_dim=200, hidden=256, layers=1, dropout=0.3,
-                 pool="mean", max_len=256, epochs=8, batch_size=32,
-                 lr=2e-3, weight_decay=0.0, seed=42)
+BASE_CFG = LSTMConfig(emb_dim=200, hidden=256, layers=1, dropout=0.3,
+                      pool="mean", max_len=256, epochs=8, batch_size=32,
+                      lr=2e-3, weight_decay=0.0, seed=42)
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -96,35 +92,34 @@ def parse_args():
     return p.parse_args()
 
 def _apply_overrides(cfg, args):
-    # mutate the dataclass with CLI overrides
-    cfg.emb_dim = args.emb_dim
-    cfg.hidden = args.hidden
-    cfg.layers = args.layers
-    cfg.dropout = args.dropout
-    cfg.pool = args.pool
-    cfg.max_len = args.max_len
+    return replace(
+        cfg,
+        emb_dim=args.emb_dim,
+        hidden=args.hidden,
+        layers=args.layers,
+        dropout=args.dropout,
+        pool=args.pool,
+        max_len=args.max_len,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        seed=args.seed,
+        **{
+            k: getattr(args, k)
+            for k in ["min_count", "vocab_max_size", "lowercase", "alpha_only", "device"]
+            if hasattr(cfg, k) and hasattr(args, k)
+        }
+    )
 
-    cfg.epochs = args.epochs
-    cfg.batch_size = args.batch_size
-    cfg.lr = args.lr
-    cfg.weight_decay = args.weight_decay
-    cfg.seed = args.seed
-
-    if hasattr(cfg, "min_count"): cfg.min_count = args.min_count
-    if hasattr(cfg, "vocab_max_size"): cfg.vocab_max_size = args.vocab_max_size
-    if hasattr(cfg, "lowercase"): cfg.lowercase = args.lowercase
-    if hasattr(cfg, "alpha_only"): cfg.alpha_only = args.alpha_only
-    if hasattr(cfg, "device"): cfg.device = args.device
-    return cfg
 
 def main():
     args = parse_args()
-    _apply_overrides(CFG, args)
-    print(">>> EFFECTIVE CFG:", asdict(CFG))
-    print(">>> ARGS.EPOCHS:", args.epochs)
+    cfg = _apply_overrides(BASE_CFG, args)
+    print(">>> EFFECTIVE CFG:", asdict(cfg), flush=True)
 
     os.makedirs(LSTM_OUTPUT, exist_ok=True)
-    set_seed(CFG.seed)
+    set_seed(cfg.seed)
 
     # load data
     df = pd.read_csv(EXCERPT_FILE).reset_index(drop=True)
@@ -141,29 +136,35 @@ def main():
     Xte = test_df["excerpt"].tolist();  yte = test_df["author"].tolist()
 
     # vocab from train only 
-    stoi = build_vocab(Xtr, min_count=getattr(CFG, "min_count", 1),
-                       lowercase=getattr(CFG, "lowercase", True), alpha_only=getattr(CFG, "alpha_only", True),
-                       max_size=getattr(CFG, "vocab_max_size", 50000))
+    stoi = build_vocab(Xtr, min_count=getattr(cfg, "min_count", 1),
+                       lowercase=getattr(cfg, "lowercase", True), alpha_only=getattr(cfg, "alpha_only", True),
+                       max_size=getattr(cfg, "vocab_max_size", 50000))
     classes = sorted(list(set(ytr)))
 
     # datasets / loaders
-    train_ds = TextDataset(Xtr, ytr, stoi, classes, getattr(CFG, "lowercase", True), getattr(CFG, "alpha_only", True), CFG.max_len)
-    test_ds  = TextDataset(Xte, yte, stoi, classes, getattr(CFG, "lowercase", True), getattr(CFG, "alpha_only", True), CFG.max_len)
-    train_dl = DataLoader(train_ds, batch_size=CFG.batch_size, shuffle=True,  collate_fn=pad_collate)
-    test_dl  = DataLoader(test_ds,  batch_size=CFG.batch_size, shuffle=False, collate_fn=pad_collate)
+    train_ds = TextDataset(Xtr, ytr, stoi, classes, getattr(cfg, "lowercase", True),
+                           getattr(cfg, "alpha_only", True), cfg.max_len)
+    test_ds  = TextDataset(Xte, yte, stoi, classes, getattr(cfg, "lowercase", True),
+                           getattr(cfg, "alpha_only", True), cfg.max_len)
+    train_dl = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True,  collate_fn=pad_collate)
+    test_dl  = DataLoader(test_ds,  batch_size=cfg.batch_size, shuffle=False, collate_fn=pad_collate)
 
-    # model / optim
     model = LSTMClassifier(vocab_size=len(stoi), num_classes=len(classes),
-                           emb_dim=CFG.emb_dim, hidden=CFG.hidden,
-                           layers=CFG.layers, dropout=CFG.dropout, pool=CFG.pool).to(getattr(CFG, "device", "cpu"))
-    optim = torch.optim.Adam(model.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay)
+                           emb_dim=cfg.emb_dim, hidden=cfg.hidden,
+                           layers=cfg.layers, dropout=cfg.dropout, pool=cfg.pool).to(getattr(cfg, "device", "cpu"))
+    optim = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     crit  = nn.CrossEntropyLoss()
+
+    epochs = int(cfg.epochs)
+    print(">>> EPOCHS:", epochs, flush=True)
+
 
     # train
     def train_epoch():
         model.train(); tot, n = 0.0, 0
         for xb, yb, lengths in train_dl:
-            xb, yb, lengths = xb.to(getattr(CFG, "device", "cpu")), yb.to(getattr(CFG, "device", "cpu")), lengths.to(getattr(CFG, "device", "cpu"))
+            dev = getattr(cfg, "device", "cpu")
+            xb, yb, lengths = xb.to(dev), yb.to(dev), lengths.to(dev)
             optim.zero_grad()
             logits, _ = model(xb, lengths)
             loss = crit(logits, yb)
@@ -173,16 +174,16 @@ def main():
             tot += loss.item() * xb.size(0); n += xb.size(0)
         return tot / max(n, 1)
 
-    for e in range(1, CFG.epochs + 1):
+    for e in range(1, epochs + 1):
         loss = train_epoch()
-        print(f"[epoch {e}/{CFG.epochs}] loss={loss:.4f}")
+        print(f"[epoch {e}/{epochs}] loss={loss:.4f}", flush=True)
 
     # evaluate
     model.eval()
     y_true, y_pred = [], []
     with torch.no_grad():
         for xb, yb, lengths in test_dl:
-            xb, yb, lengths = xb.to(getattr(CFG, "device", "cpu")), yb.to(getattr(CFG, "device", "cpu")), lengths.to(getattr(CFG, "device", "cpu"))
+            xb, yb, lengths = xb.to(getattr(cfg, "device", "cpu")), yb.to(getattr(cfg, "device", "cpu")), lengths.to(getattr(CFG, "device", "cpu"))
             logits, _ = model(xb, lengths)
             pred = logits.argmax(-1)
             y_true.extend(yb.cpu().tolist())
@@ -205,7 +206,7 @@ def main():
     print("Confusion matrix:\n", cm)
 
     # save artifacts / outputs 
-    save_artifacts(LSTM_OUTPUT, model, stoi, classes, CFG)
+    save_artifacts(LSTM_OUTPUT, model, stoi, classes, cfg)
     pd.DataFrame({"text": Xte, "author": test_df["author"], "pred": preds_labels}).to_csv(
         os.path.join(LSTM_OUTPUT, "preds.csv"), index=False
     )
@@ -215,7 +216,7 @@ def main():
         json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
 
     # export embeddings for t-SNE
-    Z = encode_texts(model, Xte, stoi, classes, CFG)
+    Z = encode_texts(model, Xte, stoi, classes, cfg)
     np.save(os.path.join(LSTM_OUTPUT, "emb_test.npy"), Z.astype(np.float32))
 
     # save meta
@@ -223,7 +224,7 @@ def main():
         "data": EXCERPT_FILE,
         "split_file": TRAIN_DATA if os.path.exists(TRAIN_DATA) else None,
         "n_test": len(Xte),
-        "cfg": asdict(CFG),
+        "cfg": asdict(cfg),
         "classes": classes,
     }
     with open(os.path.join(LSTM_OUTPUT, "meta.json"), "w") as f:
