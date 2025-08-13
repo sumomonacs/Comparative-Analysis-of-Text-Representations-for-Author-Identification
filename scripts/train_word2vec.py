@@ -4,10 +4,15 @@
 
 import os
 import json
+import joblib
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.base import BaseEstimator, TransformerMixin
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -58,6 +63,20 @@ def serialize_meta(meta):
     return meta
 
 
+class W2VEncodeTransformer(BaseEstimator, TransformerMixin):
+    """
+    Sklearn transformer that uses a fitted Word2VecDocEmbed to encode raw texts.
+    """
+    def __init__(self, fitted_model):
+        self.fitted_model = fitted_model  
+
+    def fit(self, X, y=None):
+        return self  # model is already fitted
+
+    def transform(self, X):
+        return np.asarray(self.fitted_model.encode(list(X)))  # (n_samples, n_dims)
+
+
 def main():
     os.makedirs(W2V_OUTPUT, exist_ok=True)
 
@@ -96,21 +115,24 @@ def main():
     print(report_txt)
     print("Confusion matrix:\n", cm)
 
-    # save artifacts + outputs
-    artifacts_dir = os.path.join(W2V_OUTPUT, "artifacts")
-    model.save(artifacts_dir)
+    os.makedirs(W2V_OUTPUT, exist_ok=True)
 
-    pd.DataFrame({
-        "text": test_df["excerpt"],
-        "author": y_test,
-        "pred": preds
-    }).to_csv(os.path.join(W2V_OUTPUT, "preds.csv"), index=False)
+    model.save(W2V_OUTPUT)
 
-    with open(os.path.join(W2V_OUTPUT, "classification_report.txt"), "w", encoding="utf-8") as f:
-        f.write(report_txt)
+    # build a fitted pipeline that accepts raw strings
+    pipe = Pipeline([
+        ("w2v_encode", W2VEncodeTransformer(model)),          # text -> numeric via fitted model
+        ("scaler", StandardScaler(with_mean=True, with_std=True)),
+        ("classifier", LogisticRegression(max_iter=1000, C=CFG.clf_C)),
+    ])
 
-    with open(os.path.join(W2V_OUTPUT, "metrics.json"), "w", encoding="utf-8") as f:
-        json.dump({"accuracy": float(acc), "macro_f1": float(mf1), "split": split_mode}, f, indent=2)
+    # fit the pipeline on text
+    pipe.fit(X_train, y_train)
+
+    # dump under names the evaluator already looks for
+    joblib.dump(pipe, os.path.join(W2V_OUTPUT, "pipeline.joblib"))
+    joblib.dump(pipe, os.path.join(W2V_OUTPUT, "classifier.joblib"))  # alias, loaded first by many configs
+    print("Exported:", sorted(os.listdir(W2V_OUTPUT)))
 
     # save meta for reproducibility
     meta = {

@@ -5,8 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.manifold import TSNE
-import matplotlib
-matplotlib.use("Agg")  # headless-safe
+import joblib
 import matplotlib.pyplot as plt
 
 import sys
@@ -43,13 +42,12 @@ MODELS = {
         "type": "lstm",
         "artifacts": LSTM_OUTPUT,
     },
+
     "sbert": {
-        "type": "sklearn_prob",
+        "type": "sbert_infer",        
         "artifacts": SBERT_OUTPUT,
-        "clf_keys": ["classifier.joblib", "logreg.joblib", "clf.joblib"],
-        "vec_keys": ["vectorizer.joblib", "sbert_vectorizer.joblib"],
-        "scaler_keys": ["scaler.joblib"],
     },
+
 }
 OUT_ROOT = Path("results/eval_unseen")
 SEED = 42
@@ -104,40 +102,31 @@ def _safe_tsne(Z, labels, title, out_png):
 
 # --------- adapters ---------
 def _eval_sklearn_prob(spec, excerpts):
-    import joblib
-    from scipy import sparse as _sp
+
     art = spec["artifacts"]
 
-    clf_path = _find_first(art, spec.get("clf_keys", []))
-    assert clf_path, f"No classifier joblib found in {art}"
+    # prefer a full pipeline that accepts raw text
+    clf_path = _find_first(art, ["pipeline.joblib", "classifier.joblib", "model.joblib", "clf.joblib", "logreg.joblib"])
+    if not clf_path:
+        raise FileNotFoundError(f"No classifier pipeline found in {art}")
     clf = joblib.load(clf_path)
 
-    vec = scaler = None
-    if hasattr(clf, "predict_proba") and not hasattr(clf, "steps"):
-        vp = _find_first(art, spec.get("vec_keys", []))
-        spath = _find_first(art, spec.get("scaler_keys", []))
-        if vp: vec = joblib.load(vp)
-        if spath: scaler = joblib.load(spath)
-
-    if vec is not None:
-        X = vec.transform(excerpts)
-        if scaler is not None:
-            X = scaler.transform(X.toarray() if _sp.issparse(X) else X)
-    else:
-        X = excerpts  # Pipeline that handles raw text
-
+    # get probabilities directly from raw text
     if hasattr(clf, "predict_proba"):
-        prob = clf.predict_proba(X)
-        classes = clf.classes_.tolist()
+        prob = clf.predict_proba(excerpts)
+        classes = getattr(clf, "classes_", None)
+        if classes is None and hasattr(clf, "steps"):
+            classes = getattr(clf.steps[-1][1], "classes_", None)
+        classes = classes.tolist() if classes is not None else list(range(prob.shape[1]))
     else:
-        scores = clf.decision_function(X)
+        # rare fallback: decision_function
+        scores = clf.decision_function(excerpts)
         e = np.exp(scores - scores.max(axis=1, keepdims=True))
         prob = e / e.sum(axis=1, keepdims=True)
         classes = getattr(clf, "classes_", list(range(prob.shape[1])))
 
-    # Fresh embedding from THIS batch (no precomputed files)
-    d = prob.shape[1]
-    k = 2 if d <= 2 else min(50, d - 1)
+    # make t‑SNE embedding from current probs (always length-matched)
+    k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
     embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
 
     return classes, prob, embed
@@ -171,6 +160,57 @@ def _eval_lstm(spec, excerpts):
 
     return classes, prob, embed
 
+def _eval_sbert_infer(spec, excerpts):
+    """
+    SBERT embed-only path that mirrors scripts.infer_author:
+    - load best.pt/last.pt
+    - build SiameseModel with same constructor args
+    - model.encode(texts, batch_size=32)
+    Returns (classes=None, prob=None, embed)
+    """
+    import torch
+    from pathlib import Path
+    from models.sbert import SiameseModel
+
+    art = Path(spec["artifacts"])
+    ckpt = art / "best.pt"
+    if not ckpt.exists():
+        alt = art / "last.pt"
+        assert alt.exists(), f"No SBERT checkpoint in {art} (looked for best.pt/last.pt)"
+        ckpt = alt
+
+    # load checkpoint (PyTorch 2.6-safe)
+    try:
+        state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    except TypeError:
+        state = torch.load(str(ckpt), map_location="cpu")
+
+    raw = state.get("model_state_dict", state)
+    weights = {k.replace("module.", "", 1): v for k, v in raw.items()}
+
+    device = (
+        torch.device("cuda") if torch.cuda.is_available()
+        else torch.device("mps") if torch.backends.mps.is_available()
+        else torch.device("cpu")
+    )
+
+    # build model exactly like scripts/infer_author.py
+    model = SiameseModel(
+        encoder_name="all-MiniLM-L6-v2",
+        proj_dim=256, mlp_hidden=512, dropout=0.1, init_temp=10.0, device=device
+    ).to(device)
+    model.load_state_dict(weights, strict=False)
+    model.eval()
+
+    # encode excerpts (mirrors _rank_authors_batch → model.encode)
+    with torch.inference_mode():
+        embed = model.encode(excerpts, batch_size=32).detach().cpu().float().numpy()
+
+    classes, prob = None, None
+    return classes, prob, embed
+
+
+
 # --------- main ---------
 def main():
     ap = argparse.ArgumentParser()
@@ -193,8 +233,11 @@ def main():
         print(f"\n=== Evaluating {name} on unseen set ===")
         if spec["type"] == "lstm":
             classes, prob, embed = _eval_lstm(spec, excerpts)
+        elif spec["type"] == "sbert_infer":
+            classes, prob, embed = _eval_sbert_infer(spec, excerpts)
         else:
             classes, prob, embed = _eval_sklearn_prob(spec, excerpts)
+
 
         order = np.argsort(-prob, axis=1)
         topk = [[classes[j] for j in row[:3]] for row in order]
