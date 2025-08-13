@@ -183,7 +183,7 @@ def _eval_lstm(spec, excerpts):
 
     emb_npy = os.path.join(art, "emb_test.npy")
     if os.path.exists(emb_npy):
-        embed = np.load(emb_npy).astype(np.float32, copy=False)
+        embed = np.load(emb_npy, allow_pickle=False).astype(np.float32, copy=False)
     else:
         embed = encode_texts(model, excerpts, stoi, classes, cfg).astype(np.float32, copy=False)
 
@@ -204,7 +204,7 @@ def _plot_tsne(Z, labels, title, out_png):
     # t‑SNE requires perplexity < n_samples; keep it modest
     perplexity = max(5, min(30, (n - 1) // 3)) if n > 10 else max(2, (n - 1) // 3 or 2)
 
-    tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto", perplexity=perplexity)
+    tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate=200.0, perplexity=perplexity)
     Y = tsne.fit_transform(Z)
 
     authors = sorted(set(labels))
@@ -280,7 +280,7 @@ def _evaluate_one(name, spec, df):
     print(f" Overall: top1={top1_acc:.4f}  top2={top2_acc:.4f}  top3={top3_acc:.4f}")
     print(" By bucket:")
     print(by_bucket[["bucket", "n", "top1_acc", "top2_acc", "top3_acc"]].to_string(index=False))
-    
+
     embed = np.asarray(embed)
     ok = embed.ndim == 2 and embed.shape[0] >= 3 and embed.shape[1] >= 2
     if ok:
