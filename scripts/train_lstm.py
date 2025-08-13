@@ -219,6 +219,7 @@ def main():
     # export embeddings for t-SNE
     Z = encode_texts(model, Xte, stoi, classes, cfg)
     np.save(os.path.join(LSTM_OUTPUT, "emb_test.npy"), Z.astype(np.float32))
+    
 
     # save meta
     meta = {

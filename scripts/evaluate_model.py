@@ -190,8 +190,6 @@ def _eval_lstm(spec, excerpts):
     return classes, topk, prob, embed
 
 def _plot_tsne(Z, labels, title, out_png):
-    
-
     Z = np.asarray(Z)
     if Z.ndim != 2:
         Z = Z.reshape(len(Z), -1)
@@ -282,6 +280,24 @@ def _evaluate_one(name, spec, df):
     print(f" Overall: top1={top1_acc:.4f}  top2={top2_acc:.4f}  top3={top3_acc:.4f}")
     print(" By bucket:")
     print(by_bucket[["bucket", "n", "top1_acc", "top2_acc", "top3_acc"]].to_string(index=False))
+    
+    embed = np.asarray(embed)
+    ok = embed.ndim == 2 and embed.shape[0] >= 3 and embed.shape[1] >= 2
+    if ok:
+        try:
+            # try a fast cast; if this fails, regenerate from prob
+            embed = embed.astype(np.float32, copy=False)
+        except Exception:
+            ok = False
+
+    if not ok or embed.dtype.kind not in ("f", "c"):
+        print(f" [warn] Bad embed dtype/shape ({getattr(embed,'dtype',None)}, {getattr(embed,'shape',None)}). "
+            "Regenerating from probabilities via SVD...")
+        from sklearn.decomposition import TruncatedSVD
+        k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
+        embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
+
+    print(f"[tsne] {name}: embed.shape={embed.shape}, dtype={embed.dtype}")
 
 
     _plot_tsne(embed, gold, title=f"{name} — t‑SNE (unseen)", out_png=out_dir / "tsne.png")
