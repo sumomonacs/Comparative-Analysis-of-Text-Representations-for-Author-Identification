@@ -1,9 +1,3 @@
-"""
-    This file evaluates models on unseen (out-of-domain) set:
-    - Compute Top-1 / Top-2 accuracy
-    - Make t-SNE plots
-"""
-
 import os
 from pathlib import Path
 import argparse
@@ -11,6 +5,8 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import TruncatedSVD
 from sklearn.manifold import TSNE
+import matplotlib
+matplotlib.use("Agg")  # headless-safe
 import matplotlib.pyplot as plt
 
 import sys
@@ -20,7 +16,7 @@ from scripts.config import (
     TFIDF_OUTPUT, STYLO_OUTPUT, W2V_OUTPUT, LSTM_OUTPUT, SBERT_OUTPUT,
 )
 
-# model registry
+# --------- registry ---------
 MODELS = {
     "tfidf": {
         "type": "sklearn_prob",
@@ -58,6 +54,7 @@ MODELS = {
 OUT_ROOT = Path("results/eval_unseen")
 SEED = 42
 
+# --------- utils ---------
 def _find_first(art_dir, candidates):
     for name in candidates:
         p = os.path.join(art_dir, name)
@@ -85,7 +82,9 @@ def _safe_tsne(Z, labels, title, out_png):
     if Z.shape[1] > 50:
         Z = TruncatedSVD(n_components=50, random_state=SEED).fit_transform(Z).astype(np.float32, copy=False)
 
-    perplexity = max(5, min(30, (len(Z) - 1) // 3)) if len(Z) > 10 else max(2, (len(Z) - 1) // 3 or 2)
+    n = Z.shape[0]
+    assert n == len(labels), f"length mismatch: Z={n} labels={len(labels)}"
+    perplexity = max(5, min(30, (n - 1) // 3)) if n > 10 else max(2, (n - 1) // 3 or 2)
     tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate=200.0, perplexity=perplexity)
     Y = tsne.fit_transform(Z)
 
@@ -103,6 +102,7 @@ def _safe_tsne(Z, labels, title, out_png):
     plt.savefig(out_png, dpi=180)
     plt.close()
 
+# --------- adapters ---------
 def _eval_sklearn_prob(spec, excerpts):
     import joblib
     from scipy import sparse as _sp
@@ -124,7 +124,7 @@ def _eval_sklearn_prob(spec, excerpts):
         if scaler is not None:
             X = scaler.transform(X.toarray() if _sp.issparse(X) else X)
     else:
-        X = excerpts
+        X = excerpts  # Pipeline that handles raw text
 
     if hasattr(clf, "predict_proba"):
         prob = clf.predict_proba(X)
@@ -135,9 +135,11 @@ def _eval_sklearn_prob(spec, excerpts):
         prob = e / e.sum(axis=1, keepdims=True)
         classes = getattr(clf, "classes_", list(range(prob.shape[1])))
 
-    # embed from prob via SVD
-    k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
+    # Fresh embedding from THIS batch (no precomputed files)
+    d = prob.shape[1]
+    k = 2 if d <= 2 else min(50, d - 1)
     embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
+
     return classes, prob, embed
 
 def _eval_lstm(spec, excerpts):
@@ -164,9 +166,12 @@ def _eval_lstm(spec, excerpts):
             probs.append(p)
     prob = np.vstack(probs)
 
+    # Fresh embeddings for THIS batch
     embed = encode_texts(model, excerpts, stoi, classes, cfg).astype(np.float32, copy=False)
+
     return classes, prob, embed
 
+# --------- main ---------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", type=str, default="tfidf,stylometry,word2vec,lstm,sbert")
@@ -176,7 +181,7 @@ def main():
     excerpts = df["excerpt"].tolist()
     gold = df["author"].tolist()
 
-    for name in [m.strip() for m in args.models.split(",")]:
+    for name in [m.strip() for m in args.models.split(",") if m.strip()]:
         if name not in MODELS:
             print(f"[skip] unknown model: {name}")
             continue
@@ -193,13 +198,19 @@ def main():
 
         order = np.argsort(-prob, axis=1)
         topk = [[classes[j] for j in row[:3]] for row in order]
-        top1_acc = float(np.mean([g == row[0] for g, row in zip(gold, topk)]))
+        top1 = [row[0] for row in topk]
+        top1_acc = float(np.mean([g == p for g, p in zip(gold, top1)]))
         top2_acc = float(_topk_hits(gold, topk, k=2))
 
         print(f" Top-1 acc: {top1_acc:.4f}")
         print(f" Top-2 acc: {top2_acc:.4f}")
 
         out_png = OUT_ROOT / name / "tsne_unseen.png"
+        # final guard to ensure lengths match (they should)
+        if embed.shape[0] != len(gold):
+            # fallback: derive from prob so it always matches
+            k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
+            embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
         _safe_tsne(embed, gold, title=f"{name} — t-SNE (unseen)", out_png=out_png)
         print(f" Saved t-SNE to {out_png}")
 
