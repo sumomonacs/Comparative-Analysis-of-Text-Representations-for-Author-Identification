@@ -32,7 +32,7 @@ CFG = W2VConfig(
     doc_pool="sif",       # "mean" | "tfidf" | "sif"
     sif_a=1e-3,
     remove_first_pc=True,
-    clf_C=1.0,
+    clf_C=0.1,
     seed=SEED,
 )
 
