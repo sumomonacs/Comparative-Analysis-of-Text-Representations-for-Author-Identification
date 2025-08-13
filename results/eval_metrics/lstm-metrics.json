@@ -3,98 +3,98 @@
     "model": "lstm",
     "overall": {
       "n": 300,
-      "top1_acc": 0.43666666666666665,
-      "top2_acc": 0.6
+      "top1_acc": 0.49666666666666665,
+      "top2_acc": 0.7333333333333333
     },
     "by_author": {
       "Charlotte Brontë": {
         "n": 60,
-        "top1_acc": 0.7166666666666667,
-        "top2_acc": 0.8
+        "top1_acc": 0.7333333333333333,
+        "top2_acc": 0.8833333333333333
       },
       "Edith Wharton": {
         "n": 60,
-        "top1_acc": 0.1,
-        "top2_acc": 0.31666666666666665
+        "top1_acc": 0.11666666666666667,
+        "top2_acc": 0.5
       },
       "George Eliot": {
         "n": 60,
-        "top1_acc": 0.5166666666666667,
-        "top2_acc": 0.75
+        "top1_acc": 0.6,
+        "top2_acc": 0.7166666666666667
       },
       "Henry James": {
         "n": 60,
-        "top1_acc": 0.13333333333333333,
-        "top2_acc": 0.25
+        "top1_acc": 0.4166666666666667,
+        "top2_acc": 0.7833333333333333
       },
       "Virginia Woolf": {
         "n": 60,
-        "top1_acc": 0.7166666666666667,
-        "top2_acc": 0.8833333333333333
+        "top1_acc": 0.6166666666666667,
+        "top2_acc": 0.7833333333333333
       }
     },
     "by_book": {
       "bronte_shirley": {
         "n": 30,
         "top1_acc": 0.5,
-        "top2_acc": 0.6666666666666666
+        "top2_acc": 0.7666666666666667
       },
       "bronte_the_professor": {
         "n": 30,
-        "top1_acc": 0.9333333333333333,
-        "top2_acc": 0.9333333333333333
+        "top1_acc": 0.9666666666666667,
+        "top2_acc": 1.0
       },
       "eliot_adam_bede": {
         "n": 30,
         "top1_acc": 0.43333333333333335,
-        "top2_acc": 0.6666666666666666
+        "top2_acc": 0.6
       },
       "eliot_silas_marner": {
         "n": 30,
-        "top1_acc": 0.6,
+        "top1_acc": 0.7666666666666667,
         "top2_acc": 0.8333333333333334
       },
       "james_the_ambassadors": {
         "n": 30,
-        "top1_acc": 0.1,
-        "top2_acc": 0.2
+        "top1_acc": 0.4666666666666667,
+        "top2_acc": 0.8666666666666667
       },
       "james_the_beast_in_the_jungle": {
         "n": 30,
-        "top1_acc": 0.16666666666666666,
-        "top2_acc": 0.3
+        "top1_acc": 0.36666666666666664,
+        "top2_acc": 0.7
       },
       "wharton_ethan_frome": {
         "n": 30,
-        "top1_acc": 0.16666666666666666,
-        "top2_acc": 0.3
+        "top1_acc": 0.06666666666666667,
+        "top2_acc": 0.6333333333333333
       },
       "wharton_the_reef": {
         "n": 30,
-        "top1_acc": 0.03333333333333333,
-        "top2_acc": 0.3333333333333333
+        "top1_acc": 0.16666666666666666,
+        "top2_acc": 0.36666666666666664
       },
       "woolf_night_and_day": {
         "n": 30,
-        "top1_acc": 0.6,
-        "top2_acc": 0.8666666666666667
+        "top1_acc": 0.43333333333333335,
+        "top2_acc": 0.7
       },
       "woolf_the_voyage_out": {
         "n": 30,
-        "top1_acc": 0.8333333333333334,
-        "top2_acc": 0.9
+        "top1_acc": 0.8,
+        "top2_acc": 0.8666666666666667
       }
     },
     "by_bucket": {
       "long": {
         "n": 200,
-        "top1_acc": 0.445,
-        "top2_acc": 0.58
+        "top1_acc": 0.495,
+        "top2_acc": 0.76
       },
       "short": {
         "n": 100,
-        "top1_acc": 0.42,
-        "top2_acc": 0.64
+        "top1_acc": 0.5,
+        "top2_acc": 0.68
       }
     }
   }

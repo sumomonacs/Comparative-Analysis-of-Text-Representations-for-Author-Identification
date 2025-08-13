@@ -1,0 +1,5 @@
+model,long,short
+lstm,0.495,0.5
+stylometry,0.615,0.48
+tfidf,0.46,0.4
+word2vec,0.56,0.45

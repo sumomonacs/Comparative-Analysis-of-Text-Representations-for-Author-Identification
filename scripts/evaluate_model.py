@@ -7,15 +7,16 @@ from sklearn.manifold import TSNE
 import joblib
 import json
 import matplotlib.pyplot as plt
-from models.word2vec import W2VEncodeTransformer 
+
 import torch
+import random
 from pathlib import Path
 from models.sbert import SiameseModel
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import (
-    INFERENCE_FILE, EVOLVE_DIR, PIC_DIR, 
+    INFERENCE_FILE, EVOLVE_DIR, PIC_DIR, EXCERPT_FILE, TRAIN_DATA,
     TFIDF_OUTPUT, STYLO_OUTPUT, W2V_OUTPUT, LSTM_OUTPUT, SBERT_OUTPUT,
 )
 
@@ -143,7 +144,7 @@ def _eval_sklearn_prob(spec, excerpts):
         clf_path = _find_first(art, spec.get("clf_keys", []))
         vec_path = _find_first(art, spec.get("vec_keys", []))
         assert clf_path, f"No classifier joblib found in {art}"
-        assert vec_path, f"No vectorizer joblib found in {art} (needed if no pipeline)"
+        assert vec_path, f"No vectorizer joblib found in {art} "
 
         clf = joblib.load(clf_path)
         vectorizer = joblib.load(vec_path)
@@ -206,51 +207,73 @@ def _eval_lstm(spec, excerpts):
 
     return classes, prob, embed
 
-def _eval_sbert_infer(spec, excerpts):
-    art = Path(spec["artifacts"])
-    ckpt = art / "best.pt"
-    # load checkpoint 
-    try:
-        state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
-    except TypeError:
-        state = torch.load(str(ckpt), map_location="cpu")
-
-    raw = state.get("model_state_dict", state)
-    weights = {k.replace("module.", "", 1): v for k, v in raw.items()}
-
-    device = (
-        torch.device("cuda") if torch.cuda.is_available()
-        else torch.device("mps") if torch.backends.mps.is_available()
-        else torch.device("cpu")
-    )
-
-    # build model exactly like
-    model = SiameseModel( encoder_name="all-MiniLM-L6-v2", proj_dim=256, mlp_hidden=512, dropout=0.1, init_temp=10.0, device=device).to(device)
-    model.load_state_dict(weights, strict=False)
-    model.eval()
-
-    # encode excerpts
-    with torch.inference_mode():
-        embed = model.encode(excerpts, batch_size=32).detach().cpu().float().numpy()
-
-    classes, prob = None, None
-    return classes, prob, embed
-
-def _eval_sbert_centroid(spec, excerpts):
+def _load_sbert_weights(model, ckpt_path):
     """
-    Compute SBERT class probabilities via cosine to TRAIN centroids.
-    Returns (classes, prob[n,k], embed[n,d]).
+    Load SBERT weights from a checkpoint that stores under 'state_dict'
+    (your training code), with common prefix fixes. Fails fast if keys
+    are missing so you don't silently evaluate an untrained model.
+    """
+    import re, torch
+    try:
+        state = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    except TypeError:
+        state = torch.load(str(ckpt_path), map_location="cpu")
+
+    raw = state.get("state_dict", state)   # <-- IMPORTANT: use 'state_dict'
+    # strip common wrappers/prefixes
+    def _strip(k):
+        k = re.sub(r"^(module\.|model\.)", "", k)
+        return k
+    mapped = { _strip(k): v for k, v in raw.items() }
+
+    # Optional: remap alternative head names if your train script used them
+    remapped = {}
+    for k, v in mapped.items():
+        kk = k
+        # e.g., if training named the head "head.*" or "mlp.*"
+        if kk.startswith("head."):
+            kk = "scorer." + kk[len("head."):]
+        if kk.startswith("mlp."):
+            kk = "scorer." + kk[len("mlp."):]
+        remapped[kk] = v
+
+    # Load and *fail fast* if something doesn't match (so you notice)
+    ret = model.load_state_dict(remapped, strict=True)
+    # If you prefer non-fatal, set strict=False but print:
+    # ret = model.load_state_dict(remapped, strict=False)
+    # print("[SBERT DEBUG] missing_keys:", ret.missing_keys)
+    # print("[SBERT DEBUG] unexpected_keys:", ret.unexpected_keys)
+    return ret
+
+
+def _eval_sbert_pairs(spec, excerpts, agg="mean", topk_per_author=20,
+                      batch_q=32, batch_r=512, ref_chunk_for_mlp=4096):
+    """
+    Pair-scoring using the trained MLP but WITHOUT re-encoding text per pair.
+
+    - Pre-encode TRAIN refs once via model._embed_train -> proj -> L2 norm.
+    - Pre-encode queries in batches the same way.
+    - Score with model.scorer on features [zq*zr, |zq-zr|] in chunks.
+    - Aggregate per author (probability-level), top-k filter, softmax across authors.
+
+    Args:
+      agg: "mean" or "max"
+      topk_per_author: keep top-k strongest ref probs per author before aggregation
+      batch_q: query batch size for embedding
+      batch_r: reference batch size for embedding
+      ref_chunk_for_mlp: how many ref vectors to score at once per query batch (MLP chunk)
     """
     import json, numpy as np, torch, pandas as pd
     from scripts.config import EXCERPT_FILE, TRAIN_DATA
+    import torch.nn.functional as F
 
     art = Path(spec["artifacts"])
-    ckpt_best = art / "best.pt"
-    ckpt_last = art / "last.pt"
-    ckpt = ckpt_best if ckpt_best.exists() else ckpt_last
-    assert ckpt.exists(), f"No SBERT checkpoint in {art} (need best.pt or last.pt)"
+    ckpt = art / "best.pt"
+    if not ckpt.exists():
+        ckpt = art / "last.pt"
+    assert ckpt.exists(), f"No SBERT checkpoint in {art}"
 
-    # load checkpoint
+    # ---- load checkpoint ----
     try:
         state = torch.load(str(ckpt), map_location="cpu", weights_only=False)
     except TypeError:
@@ -264,15 +287,30 @@ def _eval_sbert_centroid(spec, excerpts):
         else torch.device("cpu")
     )
 
-    # build model (matches your sbert.SiameseModel defaults)
+    art = Path(spec["artifacts"])
+    ckpt = (art / "best.pt") if (art / "best.pt").exists() else (art / "last.pt")
+    assert ckpt.exists(), f"No SBERT checkpoint in {art}"
+
     model = SiameseModel(
         encoder_name="all-MiniLM-L6-v2",
         proj_dim=256, mlp_hidden=512, dropout=0.1, init_temp=10.0, device=device
     ).to(device)
-    model.load_state_dict(weights, strict=False)
+
+    # >>> replace your old load_state_dict code with:
+    _load_sbert_weights(model, ckpt)
     model.eval()
 
-    # ---- TRAIN centroids from frozen split ----
+    # ---------- helpers: encode via the *training* path ----------
+    @torch.inference_mode()
+    def _proj_encode(texts, bs):
+        zs = []
+        for i in range(0, len(texts), bs):
+            e = model._embed_train(texts[i:i+bs])              # (B, hidden)
+            z = F.normalize(model.proj(e), p=2, dim=-1)        # (B, D)
+            zs.append(z.detach().cpu())
+        return torch.cat(zs, dim=0)                            # (N, D) on CPU
+
+    # ---------- load split & bucket refs by author ----------
     df = pd.read_csv(EXCERPT_FILE).reset_index(drop=True)
     with open(TRAIN_DATA, "r", encoding="utf-8") as f:
         split = json.load(f)
@@ -281,27 +319,102 @@ def _eval_sbert_centroid(spec, excerpts):
     train_df = df.loc[~mask, ["excerpt", "author"]].reset_index(drop=True)
 
     authors = sorted(train_df["author"].unique().tolist())
-    centroids = []
-    for a in authors:
-        texts = train_df.loc[train_df["author"] == a, "excerpt"].tolist()
-        if not texts:
-            centroids.append(np.zeros((256,), dtype="float32"))
-            continue
-        Z = model.encode(texts, batch_size=32).detach().cpu().numpy().astype("float32", copy=False)
-        c = Z.mean(axis=0)
-        n = np.linalg.norm(c) + 1e-12
-        centroids.append((c / n).astype("float32"))
-    C = np.stack(centroids, axis=0)  # [K, D]
+    refs_by_author_texts = {a: train_df.loc[train_df["author"] == a, "excerpt"].tolist() for a in authors}
 
-    # ---- UNSEEN embeddings + cosine → softmax ----
-    Zq = model.encode(excerpts, batch_size=32).detach().cpu().numpy().astype("float32", copy=False)  # [N, D]
-    sims = Zq @ C.T                                # cosine (encode() already L2-normalizes proj)
-    sims = sims - sims.max(axis=1, keepdims=True)  # stability
-    e = np.exp(sims); prob = e / np.clip(e.sum(axis=1, keepdims=True), 1e-12, None)
+    # ---------- pre-encode all refs once (CPU tensors) ----------
+    refs_by_author_Z = {}
+    for a, texts in refs_by_author_texts.items():
+        if texts:
+            Z = _proj_encode(texts, batch_r)   # (Nr, D) on CPU
+        else:
+            Z = torch.empty(0, 256)            # empty fallback
+        refs_by_author_Z[a] = Z
+    
+    cap_per_author = 300
+    for a, lst in refs_by_author_texts.items():
+        if len(lst) > cap_per_author:
+            refs_by_author_texts[a] = random.sample(lst, cap_per_author)
+
+
+    # ---------- main scoring ----------
+    N = len(excerpts)
+    K = len(authors)
+    probs = np.zeros((N, K), dtype="float32")
+
+    @torch.inference_mode()
+    def _score_block_on_embeddings(Zq_cpu, Zr_cpu):
+        """
+        Zq_cpu: (Bq, D) CPU
+        Zr_cpu: (Br, D) CPU
+        returns (Bq, Br) probabilities
+        """
+        # move to device in manageable chunks
+        Bq = Zq_cpu.shape[0]
+        out = torch.empty(Bq, 0, dtype=torch.float32, device="cpu")
+        for j in range(0, Zr_cpu.shape[0], ref_chunk_for_mlp):
+            Zr = Zr_cpu[j:j+ref_chunk_for_mlp].to(device, non_blocking=True)     # (br, D)
+            Zq = Zq_cpu.to(device, non_blocking=True)                             # (bq, D)
+
+            # build features for all pairs in this chunk efficiently
+            # broadcast to (bq, br, D)
+            zq = Zq.unsqueeze(1)                  # (bq, 1, D)
+            zr = Zr.unsqueeze(0)                  # (1, br, D)
+            feats = torch.cat([zq * zr, (zq - zr).abs()], dim=-1)   # (bq, br, 2D)
+            feats = feats.reshape(-1, feats.shape[-1])              # (bq*br, 2D)
+
+            logits = model.scorer(feats).squeeze(-1) * model.temp   # (bq*br,)
+            probs_chunk = torch.sigmoid(logits).reshape(Zq.shape[0], Zr.shape[0])  # (bq, br)
+
+            out = torch.cat([out, probs_chunk.detach().cpu()], dim=1)
+            del Zr, Zq, zq, zr, feats, logits, probs_chunk
+            torch.cuda.empty_cache()
+        return out  # CPU (bq, Br_total)
+
+    # encode all queries (CPU tensors)
+    Zq_all = _proj_encode(excerpts, batch_q)   # (N, D) CPU
+
+    # for t‑SNE later: keep a copy of Zq (numpy)
+    embed = Zq_all.numpy().astype("float32", copy=False)
+
+    # loop over query batches
+    for qi in range(0, N, batch_q):
+        Zq = Zq_all[qi:qi+batch_q]   # CPU (bq, D)
+        bq = Zq.shape[0]
+        author_scores = []
+
+        for a in authors:
+            Zr = refs_by_author_Z[a]            # CPU (Nr, D)
+            if Zr.numel() == 0:
+                author_scores.append(np.full((bq,), 0.0, dtype="float32"))
+                continue
+
+            # (bq, Nr) probabilities
+            P_pairs = _score_block_on_embeddings(Zq, Zr)
+
+            # top‑k filter per row
+            if topk_per_author is not None and P_pairs.shape[1] > topk_per_author:
+                idx = np.argpartition(-P_pairs.numpy(), kth=topk_per_author-1, axis=1)[:, :topk_per_author]
+                row_idx = np.arange(bq)[:, None]
+                P_pairs = P_pairs[row_idx, idx]
+
+            # aggregate
+            if agg == "max":
+                agg_scores = P_pairs.max(dim=1).values.numpy()
+            else:
+                agg_scores = P_pairs.mean(dim=1).numpy()
+
+            author_scores.append(agg_scores.astype("float32"))
+
+        # stack (bq, K) and softmax across authors with a mild temperature
+        S = np.stack(author_scores, axis=1)             # (bq, K)
+        tau = 0.3
+        Zs = (S / tau) - (S / tau).max(axis=1, keepdims=True)
+        e = np.exp(Zs)
+        P = e / np.clip(e.sum(axis=1, keepdims=True), 1e-12, None)
+        probs[qi:qi+bq, :] = P.astype("float32")
 
     classes = authors
-    embed = Zq
-    return classes, prob, embed
+    return classes, probs, embed
 
 
 # --------- main ---------
@@ -328,7 +441,14 @@ def main():
         if spec["type"] == "lstm":
             classes, prob, embed = _eval_lstm(spec, excerpts)
         elif spec["type"] == "sbert":
-            classes, prob, embed = _eval_sbert_centroid(spec, excerpts)
+            classes, prob, embed = _eval_sbert_pairs(
+                spec, excerpts,
+                agg="max",            # try max first; often best for OOD
+                topk_per_author=80,   # 50–120 typically good; increase if each author has many refs
+                batch_q=32,
+                batch_r=512,
+                ref_chunk_for_mlp=4096
+            )
         else:
             classes, prob, embed = _eval_sklearn_prob(spec, excerpts)
 
@@ -393,7 +513,6 @@ def main():
             "by_book": by_book,
             "by_bucket": by_bucket,
         })
-
 
         out_png = os.path.join(PIC_DIR, f"{name}-tsne.png")
         # final guard to ensure lengths match (they should)

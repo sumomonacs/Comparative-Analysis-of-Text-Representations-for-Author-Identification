@@ -1,0 +1,6 @@
+model,author,top1_acc,top2_acc,n
+tfidf,Charlotte Brontë,0.8,0.9333333333333333,60
+stylometry,Edith Wharton,0.6333333333333333,0.9,60
+lstm,George Eliot,0.6,0.7166666666666667,60
+word2vec,Henry James,0.65,0.8666666666666667,60
+lstm,Virginia Woolf,0.6166666666666667,0.7833333333333333,60

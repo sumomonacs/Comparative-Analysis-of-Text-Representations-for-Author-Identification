@@ -111,9 +111,12 @@ class SiameseModel(nn.Module):
     # inference-only embeddings 
     @torch.inference_mode()
     def encode(self, texts, batch_size=64):
-        e = self.encoder.encode(texts, batch_size=batch_size, convert_to_tensor=True, device=self._device)
+        embs = []
+        for i in range(0, len(texts), batch_size):
+            embs.append(self._embed_train(texts[i:i+batch_size]))  # use same path as training
+        e = torch.cat(embs, dim=0)
         z = F.normalize(self.proj(e), p=2, dim=-1)
-        return z  # (N, proj_dim)
+        return z
 
     @property
     def embedding_dim(self):
