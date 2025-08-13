@@ -1,6 +1,5 @@
 """
     This file trains and evaluates Word2Vec (doc embeddings) + Logistic Regression.
-    Usage: python -m scripts.train_word2vec
 """
 
 import os
@@ -32,7 +31,7 @@ CFG = W2VConfig(
     doc_pool="sif",       # "mean" | "tfidf" | "sif"
     sif_a=1e-3,
     remove_first_pc=True,
-    clf_C=0.1,
+    clf_C=1,
     seed=SEED,
 )
 

@@ -23,7 +23,7 @@ from scripts.config import (
 
 # model register 
 MODELS = {
-    "tfidf_logreg": {
+    "tfidf": {
         "type": "sklearn_prob",
         "artifacts": TFIDF_OUTPUT,
         "clf_keys": ["classifier.joblib", "logreg.joblib", "clf.joblib"],
@@ -31,7 +31,7 @@ MODELS = {
         "scaler_keys": [],
         "featurizer_keys": [],
     },
-    "stylometry_logreg": {
+    "stylometry": {
         "type": "sklearn_prob",
         "artifacts": STYLO_OUTPUT,
         "clf_keys": ["logreg.joblib", "classifier.joblib", "clf.joblib"],
@@ -39,7 +39,7 @@ MODELS = {
         "scaler_keys": ["scaler.joblib"],
         "featurizer_keys": [],
     },
-    "word2vec_mlp": {
+    "word2vec": {
         "type": "sklearn_prob",
         "artifacts": W2V_OUTPUT,
         "clf_keys": ["classifier.joblib", "mlp.joblib", "clf.joblib", "logreg.joblib"],
@@ -47,11 +47,11 @@ MODELS = {
         "scaler_keys": ["scaler.joblib"],
         "featurizer_keys": [],
     },
-    "lstm_bilstm": {
+    "lstm": {
         "type": "lstm",
         "artifacts": LSTM_OUTPUT,
     },
-    "sbert_logreg": {
+    "sbert": {
         "type": "sklearn_prob",
         "artifacts": SBERT_OUTPUT,
         "clf_keys": ["classifier.joblib", "logreg.joblib", "clf.joblib"],

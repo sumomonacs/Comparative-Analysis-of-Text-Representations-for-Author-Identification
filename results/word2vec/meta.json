@@ -12,7 +12,7 @@
     "doc_pool": "sif",
     "sif_a": 0.001,
     "remove_first_pc": true,
-    "clf_C": 0.1
+    "clf_C": 1
   },
   "n_train": 749,
   "n_test": 188

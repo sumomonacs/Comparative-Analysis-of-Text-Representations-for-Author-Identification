@@ -26,6 +26,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 import argparse
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import PAIR_FILE, EXCERPT_FILE, TRAIN_DATA, SBERT_OUTPUT
@@ -151,7 +152,6 @@ def _make_loader(source, batch_size, shuffle, seed):
 
 @torch.no_grad()
 def _eval_metrics(model, loader, device):
-    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
     y_true, y_prob = [], []
     for batch in loader:
         if len(batch) == 3:

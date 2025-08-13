@@ -1,7 +1,6 @@
 
 """
     This file train and evaluate TF‑IDF + Logistic Regression.
-    Usage: python -m scripts.train_tfidf
 """
 
 import os

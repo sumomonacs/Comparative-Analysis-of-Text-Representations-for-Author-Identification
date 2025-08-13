@@ -1,5 +1,7 @@
 """
     This file train/evaluate a BiLSTM author classifier 
+    Best hyperparameter:
+    python -m scripts.train_lstm --emb-dim 300 --hidden 512 --epochs 8 --dropout 0.2 --pool "max"
 """
 import os
 import json
