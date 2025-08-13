@@ -116,7 +116,6 @@ def _apply_overrides(cfg, args):
 def main():
     args = parse_args()
     cfg = _apply_overrides(BASE_CFG, args)
-    print(">>> EFFECTIVE CFG:", asdict(cfg), flush=True)
 
     os.makedirs(LSTM_OUTPUT, exist_ok=True)
     set_seed(cfg.seed)
@@ -183,7 +182,7 @@ def main():
     y_true, y_pred = [], []
     with torch.no_grad():
         for xb, yb, lengths in test_dl:
-            xb, yb, lengths = xb.to(getattr(cfg, "device", "cpu")), yb.to(getattr(cfg, "device", "cpu")), lengths.to(getattr(CFG, "device", "cpu"))
+            xb, yb, lengths = xb.to(getattr(cfg, "device", "cpu")), yb.to(getattr(cfg, "device", "cpu")), lengths.to(getattr(cfg, "device", "cpu"))
             logits, _ = model(xb, lengths)
             pred = logits.argmax(-1)
             y_true.extend(yb.cpu().tolist())
