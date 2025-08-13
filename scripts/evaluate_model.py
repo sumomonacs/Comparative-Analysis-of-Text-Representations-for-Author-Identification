@@ -44,7 +44,7 @@ MODELS = {
     },
 
     "sbert": {
-        "type": "sbert_infer",        
+        "type": "sbert",        
         "artifacts": SBERT_OUTPUT,
     },
 
