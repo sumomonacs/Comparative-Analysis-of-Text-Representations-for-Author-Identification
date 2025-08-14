@@ -7,19 +7,22 @@ from sklearn.manifold import TSNE
 import joblib
 import json
 import matplotlib.pyplot as plt
+import re
+
 
 import torch
 import torch.nn.functional as F
 import random
 from pathlib import Path
 from models.sbert import SiameseModel
-
+from torch.utils.data import DataLoader
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from scripts.config import (
     INFERENCE_FILE, EVOLVE_DIR, PIC_DIR, EXCERPT_FILE, TRAIN_DATA,
     TFIDF_OUTPUT, STYLO_OUTPUT, W2V_OUTPUT, LSTM_OUTPUT, SBERT_OUTPUT,
 )
+from models.lstm import load_artifacts, TextDataset, pad_collate, encode_texts
 
 # --------- registry ---------
 SEED = 42
@@ -167,7 +170,7 @@ def _eval_sklearn_prob(spec, excerpts):
 
         classes = getattr(clf, "classes_", list(range(prob.shape[1])))
 
-    # compact embedding source for t‑SNE (always length-matched)
+    # compact embedding source for t‑SNE 
     k = 2 if prob.shape[1] <= 2 else min(50, prob.shape[1] - 1)
     embed = TruncatedSVD(n_components=k, random_state=SEED).fit_transform(prob).astype(np.float32, copy=False)
     return classes, prob, embed
@@ -180,11 +183,6 @@ def _decision_to_prob(scores):
     return e / e.sum(axis=1, keepdims=True)
 
 def _eval_lstm(spec, excerpts):
-    import torch
-    import torch.nn.functional as F
-    from torch.utils.data import DataLoader
-    from models.lstm import load_artifacts, TextDataset, pad_collate, encode_texts
-
     art = spec["artifacts"]
     model, stoi, classes, cfg = load_artifacts(art)
     device = cfg.device if isinstance(cfg.device, str) else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -208,23 +206,26 @@ def _eval_lstm(spec, excerpts):
 
     return classes, prob, embed
 
-# pair-scoring using trained MLP on pre-encoded embeddings.
-def _eval_sbert_pairs(spec, excerpts, agg="mean", topk_per_author=50,
-                      batch_q=32, batch_r=512, ref_chunk_for_mlp=4096,
-                      tau=0.3, lam_prior=0.7, cap_per_author=300):
-    
+# pair-scoring using trained MLP on pre-encoded embeddings + cosine kNN fusion
+def _eval_sbert_pairs(
+    spec, excerpts,
+    agg="topm-sum", topk_per_author=150,
+    batch_q=64, batch_r=512, ref_chunk_for_mlp=4096,
+    tau=0.3, lam_prior=0.0, cap_per_author=300,
+    alpha=0.2,                 # <-- fusion weight: 0=only SBERT, 1=only kNN
+    knn_k=25                   # <-- number of neighbors for kNN vote
+):
+
     art = Path(spec["artifacts"])
     ckpt = (art / "best.pt") if (art / "best.pt").exists() else (art / "last.pt")
     assert ckpt.exists(), f"No SBERT checkpoint in {art}"
 
-    # load training-style checkpoints 
+    # ----- load weights -----
     def _load_sbert_weights(model, path):
-        import re
         state = torch.load(str(path), map_location="cpu")
         raw = state.get("state_dict", state)
         def strip(k): return re.sub(r"^(module\.|model\.)", "", k)
         mapped = {strip(k): v for k, v in raw.items()}
-        # optional head aliasing:
         remap = {}
         for k, v in mapped.items():
             kk = k
@@ -232,28 +233,23 @@ def _eval_sbert_pairs(spec, excerpts, agg="mean", topk_per_author=50,
             if kk.startswith("mlp."):  kk = "scorer." + kk[len("mlp."):]
             remap[kk] = v
         model.load_state_dict(remap, strict=True)
-    # pick device once
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # build & load
     model = SiameseModel(
         encoder_name="all-MiniLM-L6-v2",
         proj_dim=256, mlp_hidden=512, dropout=0.2, init_temp=10.0, device=device
     ).to(device)
-
-    # (optional) keep a handle like your older code used
     setattr(model, "_device", device)
-
-    # now load weights
     _load_sbert_weights(model, ckpt)
-    model.eval()
+    model.eval()  # disable dropout in projector
 
     @torch.inference_mode()
     def _proj_encode(texts, bs):
         zs = []
         for i in range(0, len(texts), bs):
-            e = model._embed_train(texts[i:i+bs])          # match training
-            z = F.normalize(model.proj(e), p=2, dim=-1)
+            e = model._embed_train(texts[i:i+bs])          # same path as training
+            z = F.normalize(model.proj(e), p=2, dim=-1)    # L2-normalized
             zs.append(z.detach().cpu())
         return torch.cat(zs, dim=0)                        # CPU (N, D)
 
@@ -266,20 +262,18 @@ def _eval_sbert_pairs(spec, excerpts, agg="mean", topk_per_author=50,
     train_df = df.loc[~mask, ["excerpt", "author"]].reset_index(drop=True)
 
     authors = sorted(train_df["author"].unique().tolist())
-    refs_by_author_texts = {
-        a: train_df.loc[train_df["author"] == a, "excerpt"].tolist()
-        for a in authors
-    }
-    # cap per-author refs for balance/speed
-    for a, lst in refs_by_author_texts.items():
-        if cap_per_author and len(lst) > cap_per_author:
-            refs_by_author_texts[a] = random.sample(lst, cap_per_author)
+    refs_by_author_texts = {a: train_df.loc[train_df["author"] == a, "excerpt"].tolist()
+                            for a in authors}
+    if cap_per_author:
+        for a, lst in refs_by_author_texts.items():
+            if len(lst) > cap_per_author:
+                refs_by_author_texts[a] = random.sample(lst, cap_per_author)
 
-    # pre-encode refs
+    # pre-encode refs (projected, L2 normed)
     refs_by_author_Z = {a: _proj_encode(t, batch_r) if t else torch.empty(0, 256)
                         for a, t in refs_by_author_texts.items()}
 
-    # build cosine-centroid prior on projected space
+    # centroids (for optional prior)
     centroids = []
     for a in authors:
         Zr = refs_by_author_Z[a].numpy()
@@ -287,67 +281,128 @@ def _eval_sbert_pairs(spec, excerpts, agg="mean", topk_per_author=50,
             centroids.append(np.zeros((256,), dtype=np.float32))
         else:
             c = Zr.mean(axis=0).astype(np.float32, copy=False)
-            n = np.linalg.norm(c) + 1e-12
-            centroids.append(c / n)
+            c /= (np.linalg.norm(c) + 1e-12)
+            centroids.append(c)
     C = np.stack(centroids, axis=0)  # (K, D)
 
-    # encode queries
-    Zq_all = _proj_encode(excerpts, batch_q)  # CPU
+    # encode queries once
+    Zq_all = _proj_encode(excerpts, batch_q)  # CPU, L2-normalized
     embed = Zq_all.numpy().astype("float32", copy=False)
+
+    # ====== build flat ref bank for kNN vote ======
+    if alpha > 0.0:  # only if we actually use kNN
+        ref_blocks = []
+        ref_labels = []
+        for a_idx, a in enumerate(authors):
+            Zr = refs_by_author_Z[a]
+            if Zr.numel() > 0:
+                ref_blocks.append(Zr)                    # CPU tensor
+                ref_labels.extend([a_idx] * Zr.shape[0])
+        if ref_blocks:
+            ALL_R = torch.cat(ref_blocks, dim=0)         # (Nr_total, D), CPU, normalized
+            REF_L = np.asarray(ref_labels, dtype=np.int64)
+        else:
+            ALL_R = torch.empty(0, Zq_all.shape[1], dtype=torch.float32)
+            REF_L = np.empty((0,), dtype=np.int64)
 
     @torch.inference_mode()
     def _score_block_on_embeddings(Zq_cpu, Zr_cpu):
-        Bq = Zq_cpu.shape[0]
         dev = model._device
-        out = torch.empty(Bq, 0, dtype=torch.float32)
-        for j in range(0, Zr_cpu.shape[0], ref_chunk_for_mlp):
+        bq = int(Zq_cpu.shape[0])
+        chunks = []
+        for j in range(0, int(Zr_cpu.shape[0]), ref_chunk_for_mlp):
             Zr = Zr_cpu[j:j+ref_chunk_for_mlp].to(dev, non_blocking=True)   # (br, D)
+            br = int(Zr.shape[0])
+            if br == 0: continue
             Zq = Zq_cpu.to(dev, non_blocking=True)                           # (bq, D)
-            zq = Zq.unsqueeze(1)             # (bq,1,D)
-            zr = Zr.unsqueeze(0)             # (1,br,D)
-            feats = torch.cat([zq * zr, (zq - zr).abs()], dim=-1).reshape(-1, Zq.shape[-1]*2)
+            zq = Zq.unsqueeze(1)                                             # (bq,1,D)
+            zr = Zr.unsqueeze(0)                                             # (1,br,D)
+            feats = torch.cat([zq * zr, (zq - zr).abs()], dim=-1).view(bq*br, -1)
+            # calibrated LOGITS
             logits = model.scorer(feats).squeeze(-1) / model.temp
-            logits = model.logit_scale * logits + model.logit_bias
-            P = torch.sigmoid(logits)
-            out = torch.cat([out, P], dim=1)
-            del Zr, Zq, zq, zr, feats, logits, P
+            logits = model.logit_scale * logits + model.logit_bias           # (bq*br,)
+            L = logits.view(bq, br).cpu()                                    # (bq, br) CPU
+            chunks.append(L)
+            del Zr, Zq, zq, zr, feats, logits, L
             torch.cuda.empty_cache()
-        return out  # CPU (bq, Nr)
+        if not chunks:
+            return torch.empty(bq, 0, dtype=torch.float32)
+        return torch.cat(chunks, dim=1)  # (bq, Nr_total) CPU
 
     N, K = len(excerpts), len(authors)
     probs = np.zeros((N, K), dtype="float32")
+
+    print(f"[sbert-eval] agg={agg} topk_per_author={topk_per_author} alpha={alpha} knn_k={knn_k}")
+
     for qi in range(0, N, batch_q):
-        Zq = Zq_all[qi:qi+batch_q]                 # CPU (bq, D)
-        bq = Zq.shape[0]
-        S_list = []
+        Zq = Zq_all[qi:qi+batch_q]       # (bq, D) CPU, normalized
+        bq = int(Zq.shape[0])
+        S_tensors = []                   # (bq,) per author
+
+        # ----- SBERT pair MLP per author (aggregate LOGITS) -----
         for a in authors:
             Zr = refs_by_author_Z[a]
             if Zr.numel() == 0:
-                S_list.append(np.full((bq,), 0.0, dtype="float32"))
+                S_tensors.append(torch.zeros(bq, dtype=torch.float32))
                 continue
-            P_pairs = _score_block_on_embeddings(Zq, Zr)  # (bq, Nr) CPU
-            # keep only top‑k strongest refs per query
-            if topk_per_author and P_pairs.shape[1] > topk_per_author:
-                idx = np.argpartition(-P_pairs.numpy(), kth=topk_per_author-1, axis=1)[:, :topk_per_author]
-                row_idx = np.arange(bq)[:, None]
-                P_pairs = P_pairs[row_idx, idx]
-            # aggregate
-            if agg == "max":
-                agg_scores = P_pairs.max(dim=1).values.numpy()
+
+            L_pairs = _score_block_on_embeddings(Zq, Zr)     # (bq, Nr) LOGITS
+            if topk_per_author and L_pairs.shape[1] > topk_per_author:
+                k = min(topk_per_author, L_pairs.shape[1])
+                L_pairs = torch.topk(L_pairs, k=k, dim=1).values  # (bq, k)
+
+            if agg == "topm-sum":
+                m = min(10, L_pairs.shape[1])  # try 5/10/20
+                agg_scores = torch.topk(L_pairs, k=m, dim=1).values.sum(dim=1)
+            elif agg == "max":
+                agg_scores = L_pairs.max(dim=1).values
+            elif agg == "mean":
+                agg_scores = L_pairs.mean(dim=1)
             else:
-                agg_scores = P_pairs.mean(dim=1).numpy()
-            S_list.append(agg_scores.astype("float32"))
-        S = np.stack(S_list, axis=1)  # (bq, K)
+                raise ValueError("agg must be one of {'topm-sum','max','mean'}")
 
-        # blend with cosine-centroid prior
-        Zq_np = Zq.numpy()
-        cos = Zq_np @ C.T                      # (bq, K), cosine in [-1,1]
-        prior = 0.5 * (cos + 1.0)              # map to [0,1]
-        S = lam_prior * S + (1.0 - lam_prior) * prior
+            S_tensors.append(agg_scores)
 
-        # temperature softmax over authors
-        Zs = (S / tau) - (S / tau).max(axis=1, keepdims=True)
-        e = np.exp(Zs)
+        # stack author scores → (bq, K) torch
+        S = torch.stack(S_tensors, dim=1)  # (bq, K)
+
+        # ----- cosine kNN vote on the same normalized embeddings -----
+        if alpha > 0.0 and ALL_R.shape[0] > 0:
+            # cosine since both are L2-normalized
+            sim = Zq @ ALL_R.T                        # (bq, Nr_total)
+            kk = min(knn_k, sim.shape[1])
+            vals, idx = torch.topk(sim, k=kk, dim=1)
+            # similarity-weighted votes per author
+            w = torch.clamp(vals, min=0.0) ** 2       # nonneg, emphasize close hits
+            knn_scores = torch.zeros(bq, K, dtype=torch.float32)
+            idx_np = idx.cpu().numpy()
+            w_np = w.cpu().numpy()
+            for i in range(bq):
+                np.add.at(knn_scores[i].numpy(), REF_L[idx_np[i]], w_np[i])
+            # normalize per row to [0,1] range
+            row_sum = knn_scores.sum(dim=1, keepdim=True).clamp_min(1e-6)
+            knn_scores = knn_scores / row_sum         # (bq, K)
+        else:
+            knn_scores = torch.zeros_like(S)
+
+        # ----- optional centroid prior -----
+        if lam_prior > 0.0:
+            Zq_np = Zq.numpy()
+            cos = Zq_np @ C.T
+            prior = 0.5 * (cos + 1.0)                 # [0,1]
+            prior = torch.from_numpy(prior).to(S.dtype)
+        else:
+            prior = torch.zeros_like(S)
+
+        # ----- fuse signals (z-score S only if mixing scales) -----
+        # Bring S roughly onto 0-mean, unit-std per query (argmax-invariant by itself, but helpful for fusion).
+        Sz = (S - S.mean(dim=1, keepdim=True)) / (S.std(dim=1, keepdim=True) + 1e-6)
+        Pf = (1.0 - alpha) * Sz + alpha * knn_scores + lam_prior * prior
+
+        # softmax over authors (tau doesn't change argmax for tau>0)
+        Pf_np = Pf.cpu().numpy().astype("float32", copy=False)
+        Zs = (Pf_np / tau) - (Pf_np / tau).max(axis=1, keepdims=True)
+        e = np.exp(Zs, dtype=np.float64)
         P = e / np.clip(e.sum(axis=1, keepdims=True), 1e-12, None)
         probs[qi:qi+bq, :] = P.astype("float32")
 

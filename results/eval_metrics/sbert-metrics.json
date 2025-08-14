@@ -1,0 +1,101 @@
+[
+  {
+    "model": "sbert",
+    "overall": {
+      "n": 300,
+      "top1_acc": 0.4766666666666667,
+      "top2_acc": 0.7366666666666667
+    },
+    "by_author": {
+      "Charlotte Brontë": {
+        "n": 60,
+        "top1_acc": 0.3,
+        "top2_acc": 0.5333333333333333
+      },
+      "Edith Wharton": {
+        "n": 60,
+        "top1_acc": 0.18333333333333332,
+        "top2_acc": 0.5333333333333333
+      },
+      "George Eliot": {
+        "n": 60,
+        "top1_acc": 0.6166666666666667,
+        "top2_acc": 0.9333333333333333
+      },
+      "Henry James": {
+        "n": 60,
+        "top1_acc": 0.5,
+        "top2_acc": 0.7166666666666667
+      },
+      "Virginia Woolf": {
+        "n": 60,
+        "top1_acc": 0.7833333333333333,
+        "top2_acc": 0.9666666666666667
+      }
+    },
+    "by_book": {
+      "bronte_shirley": {
+        "n": 30,
+        "top1_acc": 0.03333333333333333,
+        "top2_acc": 0.2
+      },
+      "bronte_the_professor": {
+        "n": 30,
+        "top1_acc": 0.5666666666666667,
+        "top2_acc": 0.8666666666666667
+      },
+      "eliot_adam_bede": {
+        "n": 30,
+        "top1_acc": 0.5,
+        "top2_acc": 0.8666666666666667
+      },
+      "eliot_silas_marner": {
+        "n": 30,
+        "top1_acc": 0.7333333333333333,
+        "top2_acc": 1.0
+      },
+      "james_the_ambassadors": {
+        "n": 30,
+        "top1_acc": 0.5666666666666667,
+        "top2_acc": 0.6333333333333333
+      },
+      "james_the_beast_in_the_jungle": {
+        "n": 30,
+        "top1_acc": 0.43333333333333335,
+        "top2_acc": 0.8
+      },
+      "wharton_ethan_frome": {
+        "n": 30,
+        "top1_acc": 0.2,
+        "top2_acc": 0.5333333333333333
+      },
+      "wharton_the_reef": {
+        "n": 30,
+        "top1_acc": 0.16666666666666666,
+        "top2_acc": 0.5333333333333333
+      },
+      "woolf_night_and_day": {
+        "n": 30,
+        "top1_acc": 0.6666666666666666,
+        "top2_acc": 0.9666666666666667
+      },
+      "woolf_the_voyage_out": {
+        "n": 30,
+        "top1_acc": 0.9,
+        "top2_acc": 0.9666666666666667
+      }
+    },
+    "by_bucket": {
+      "long": {
+        "n": 200,
+        "top1_acc": 0.47,
+        "top2_acc": 0.745
+      },
+      "short": {
+        "n": 100,
+        "top1_acc": 0.49,
+        "top2_acc": 0.72
+      }
+    }
+  }
+]
